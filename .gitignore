@@ -6,6 +6,7 @@
 !/build/windows/icon.svg
 !/build/windows/info.json
 !/build/windows/wails.exe.manifest
+!/build/windows/echocode-installer.iss
 /dist/
 /bin/
 *.exe
