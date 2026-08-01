@@ -1,0 +1,20 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "EchoCode",
+  "outputfilename": "EchoCode",
+  "frontend:install": "bun install",
+  "frontend:build": "bun run build",
+  "frontend:dev:watcher": "bun run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "Exist, Lava",
+    "email": ""
+  },
+  "info": {
+    "companyName": "EYPA/AI",
+    "productName": "EchoCode",
+    "productVersion": "0.3.17",
+    "copyright": "Copyright 2026 EYPA/AI",
+    "comments": "EchoCode AI coding agent"
+  }
+}

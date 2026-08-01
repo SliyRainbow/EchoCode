@@ -1,0 +1,7 @@
+interface:
+  display_name: "EchoCode 办公产物"
+  short_description: "创建并验证 DOCX、XLSX 与 PPTX 办公文件"
+  default_prompt: "Use $echocode-office-artifacts to create or update this Office artifact and verify its structure and visual preview."
+
+policy:
+  allow_implicit_invocation: true

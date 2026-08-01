@@ -1,0 +1,2 @@
+activation: auto
+trigger: .docx | .xlsx | .xlsm | .pptx | word 文档 | excel 表格 | excel 工作簿 | powerpoint | 办公文档 | 电子表格 | 工作簿 | 考勤表 | 演示文稿 | 幻灯片

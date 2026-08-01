@@ -1,0 +1,57 @@
+# Binaries and build output
+/build/*
+!/build/windows/
+/build/windows/*
+!/build/windows/icon.ico
+!/build/windows/icon.svg
+!/build/windows/info.json
+!/build/windows/wails.exe.manifest
+/dist/
+/bin/
+*.exe
+*.dll
+*.so
+*.dylib
+!/third_party/go-webview2/webviewloader/x86/WebView2Loader.dll
+!/third_party/go-webview2/webviewloader/x64/WebView2Loader.dll
+!/third_party/go-webview2/webviewloader/arm64/WebView2Loader.dll
+
+# Wails and frontend output
+**/node_modules/
+/frontend/dist/*
+!/frontend/dist/embed-placeholder.txt
+/frontend/wailsjs/
+/frontend/package.json.md5
+/frontend/package-lock.json
+
+# Go
+/coverage.out
+/.cache/
+
+# Local editor and OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+/.vite-*.log
+.env
+.env.*
+!.env.example
+
+# Local assistant and tooling state
+/.zcode/
+/frontend/package.json.md5
+
+# Local EchoCode state
+/echocode.db*
+/runtime-settings.json
+/projects.json
+/sessions/
+
+# Temporary scaffolding
+/.wails-template/
+/.wails-*.log
+/.cache-experiments/
+/docs/chat-prototype.html
+/electron-prototype/
+/frontend/prototypes/

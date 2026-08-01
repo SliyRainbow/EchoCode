@@ -1,0 +1,18 @@
+{
+  "fixed": {
+    "file_version": "0.3.17.0",
+    "product_version": "0.3.17.0"
+  },
+  "info": {
+    "0409": {
+      "CompanyName": "EYPA/AI",
+      "FileDescription": "EchoCode AI coding agent",
+      "FileVersion": "0.3.17.0",
+      "InternalName": "EchoCode",
+      "LegalCopyright": "Copyright 2026 EYPA/AI",
+      "OriginalFilename": "EchoCode.exe",
+      "ProductName": "EchoCode",
+      "ProductVersion": "0.3.17"
+    }
+  }
+}

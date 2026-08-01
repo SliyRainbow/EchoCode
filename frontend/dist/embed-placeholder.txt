@@ -1,0 +1,1 @@
+This file keeps frontend/dist embeddable in a fresh source checkout.

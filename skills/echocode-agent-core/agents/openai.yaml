@@ -1,0 +1,7 @@
+interface:
+  display_name: "EchoCode Agent 核心"
+  short_description: "修改 EchoCode Agent 内核、上下文与编排实现"
+  default_prompt: "Use $echocode-agent-core to review this EchoCode Agent change and verify permissions, context, terminal states, and recovery."
+
+policy:
+  allow_implicit_invocation: true
