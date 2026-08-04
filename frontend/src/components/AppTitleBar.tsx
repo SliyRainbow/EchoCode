@@ -1,14 +1,16 @@
 import { Copy, Maximize2, Minus, X } from "lucide-solid";
 import { Show, createSignal, onCleanup, onMount } from "solid-js";
-import {
-  Quit,
-  WindowIsMaximised,
-  WindowMinimise,
-  WindowToggleMaximise,
-} from "../../wailsjs/runtime/runtime";
 
-function hasDesktopRuntime(): boolean {
-  return typeof window !== "undefined" && "runtime" in window;
+type DesktopRuntime = {
+  Quit: () => void;
+  WindowIsMaximised: () => Promise<boolean>;
+  WindowMinimise: () => void;
+  WindowToggleMaximise: () => void;
+};
+
+function desktopRuntime(): DesktopRuntime | undefined {
+  if (typeof window === "undefined") return undefined;
+  return (window as Window & { runtime?: DesktopRuntime }).runtime;
 }
 
 export function AppTitleBar() {
@@ -16,8 +18,9 @@ export function AppTitleBar() {
   let stateTimer: number | undefined;
 
   const refreshWindowState = () => {
-    if (!hasDesktopRuntime()) return;
-    void WindowIsMaximised().then(setMaximised).catch(() => undefined);
+    const runtime = desktopRuntime();
+    if (!runtime) return;
+    void runtime.WindowIsMaximised().then(setMaximised).catch(() => undefined);
   };
 
   const scheduleWindowStateRefresh = (delay = 80) => {
@@ -29,8 +32,9 @@ export function AppTitleBar() {
   };
 
   const toggleMaximise = () => {
-    if (!hasDesktopRuntime()) return;
-    WindowToggleMaximise();
+    const runtime = desktopRuntime();
+    if (!runtime) return;
+    runtime.WindowToggleMaximise();
     scheduleWindowStateRefresh(120);
   };
 
@@ -54,7 +58,7 @@ export function AppTitleBar() {
           type="button"
           title="最小化"
           aria-label="最小化窗口"
-          onClick={() => { if (hasDesktopRuntime()) WindowMinimise(); }}
+          onClick={() => desktopRuntime()?.WindowMinimise()}
         >
           <Minus size={15} strokeWidth={1.7} />
         </button>
@@ -73,7 +77,7 @@ export function AppTitleBar() {
           type="button"
           title="关闭"
           aria-label="关闭窗口"
-          onClick={() => { if (hasDesktopRuntime()) Quit(); }}
+          onClick={() => desktopRuntime()?.Quit()}
         >
           <X size={16} strokeWidth={1.65} />
         </button>

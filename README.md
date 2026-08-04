@@ -1,5 +1,7 @@
 # EchoCode
 
+EchoCode 内置统一扩展中心，可从官方扩展源安装 MCP、插件和 Skills。首个扩展 CodeGraph 的说明见 [docs/codegraph.zh-CN.md](docs/codegraph.zh-CN.md)。
+
 EchoCode 是一个本地优先的 AI 编程 Agent 工作台。它把多模型协议、结构化开发工具、权限审批、Plan、AI 团队、项目记忆、对话分支、Git、持久终端和内置浏览器放进同一个桌面应用。
 
 > 当前处于快速开发阶段，Windows 是主要验证平台。源码可构建、核心测试可运行，但还不是经过签名、升级迁移和真实多供应商长期压测的稳定发行版。
@@ -86,8 +88,6 @@ Windows 默认数据目录为 `%AppData%\EchoCode`：
 
 API Key 和浏览器密码不写入 JSON 或 SQLite，Windows 下保存到 Credential Manager。移除最后一个项目后，应用会使用 `%USERPROFILE%\EchoCodeProject` 作为临时工作区。
 
-本版本使用独立的 EchoCode 数据命名空间，面向新安装；不会自动读取或迁移旧版本的本地数据目录、浏览器配置或系统凭据。
-
 ## 安全边界
 
 - 工作区读写、额外可写目录、网络、Shell、破坏性操作和审批策略由运行设置共同控制。
@@ -120,6 +120,7 @@ go vet ./...
 - [Agent 内部设计](docs/agent-internal-design.zh-CN.md)
 - [贡献与 Pull Request 流程](CONTRIBUTING.md)
 - [版本变更记录](CHANGELOG.md)
+- [发布说明发布流程](docs/release-publishing.zh-CN.md)
 
 ## 许可证
 

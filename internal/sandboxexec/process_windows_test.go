@@ -176,7 +176,7 @@ func TestWindowsJobObjectTerminatesDescendantProcess(t *testing.T) {
 		case <-ticker.C:
 		}
 	}
-	if !windowsProcessExists(uint32(childPID)) {
+	if !windowsProcessRunning(uint32(childPID)) {
 		t.Fatal("descendant process exited before containment test")
 	}
 
@@ -189,21 +189,25 @@ func TestWindowsJobObjectTerminatesDescendantProcess(t *testing.T) {
 		t.Fatal("contained root process did not exit after Job Object termination")
 	}
 	terminationDeadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(terminationDeadline) && windowsProcessExists(uint32(childPID)) {
+	for time.Now().Before(terminationDeadline) && windowsProcessRunning(uint32(childPID)) {
 		time.Sleep(40 * time.Millisecond)
 	}
-	if windowsProcessExists(uint32(childPID)) {
+	if windowsProcessRunning(uint32(childPID)) {
 		t.Fatalf("descendant process %d survived Job Object termination", childPID)
 	}
 }
 
-func windowsProcessExists(pid uint32) bool {
+func windowsProcessRunning(pid uint32) bool {
 	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
 	if err != nil {
 		return false
 	}
-	_ = windows.CloseHandle(handle)
-	return true
+	defer windows.CloseHandle(handle)
+	var exitCode uint32
+	if err := windows.GetExitCodeProcess(handle, &exitCode); err != nil {
+		return false
+	}
+	return exitCode == 259
 }
 
 func TestWindowsCapabilitiesAreExplicit(t *testing.T) {

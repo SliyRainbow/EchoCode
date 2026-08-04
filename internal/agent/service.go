@@ -989,6 +989,19 @@ func (s *Service) sendChatMessage(ctx context.Context, prompt string, rawAttachm
 	defer release()
 	s.resetTurnTimeline()
 	sink = s.captureTurnTimeline(sink)
+	timing := newChatTimingTracker(turnStartedAt, sink)
+	ctx = withChatTiming(ctx, timing)
+	timing.Start("scope", "正在确认本轮权限与任务范围", "")
+	defer func() {
+		status := "completed"
+		if err != nil {
+			status = "failed"
+			if chatTurnWasCancelled(ctx, err) {
+				status = "cancelled"
+			}
+		}
+		timing.Finish(status)
+	}()
 	defer func() {
 		status := "completed"
 		if err != nil {
@@ -1020,6 +1033,7 @@ func (s *Service) sendChatMessage(ctx context.Context, prompt string, rawAttachm
 		}
 	}
 
+	timing.Start("route", "\u6b63\u5728\u9009\u62e9\u6a21\u578b\u8def\u7531", "")
 	route, err := s.selectChatRoute()
 	if err != nil {
 		return ChatResult{State: s.workbenchStateLocked()}, err
@@ -1027,6 +1041,7 @@ func (s *Service) sendChatMessage(ctx context.Context, prompt string, rawAttachm
 	if hasImageChatAttachments(attachments) && strings.EqualFold(route.Provider.Protocol, "deepseek") {
 		return ChatResult{State: s.workbenchStateLocked(), Model: route.ModelID}, errors.New("当前 DeepSeek 原生协议不支持图片输入，请切换到支持视觉的 OpenAI-compatible、Anthropic 或 Gemini 模型")
 	}
+	timing.Start("context", "\u6b63\u5728\u7ec4\u88c5\u9879\u76ee\u4e0a\u4e0b\u6587", route.ModelID)
 	preview := withMarkdownReferenceDocuments(s.contextPreviewForInputLocked(prompt), attachments)
 	preview = withTurnTaskScopeContext(preview, turnTaskScopeFrom(ctx), s.runtimeSettings.WorkspaceRoot)
 	thinkingMode, reasoningEffort := s.thinkingConfigForRoute(route)
@@ -1096,6 +1111,7 @@ func (s *Service) sendChatMessage(ctx context.Context, prompt string, rawAttachm
 		if result.Model == "" {
 			result.Model = route.ModelID
 		}
+		finishChatTiming(ctx, terminalStatus)
 		if terminalErr := s.recordTurnTerminal(terminalStatus, result.Content, result.Model, result.Parts, chatTurnDurationMs(ctx)); terminalErr != nil {
 			err = errors.Join(err, terminalErr)
 		}
@@ -1113,6 +1129,7 @@ func (s *Service) sendChatMessage(ctx context.Context, prompt string, rawAttachm
 		)
 		baseMessageCount = currentTurnMessageStart(s.sessionMessages)
 	}
+	timing.Start("compression", "\u6b63\u5728\u68c0\u67e5\u4e0a\u4e0b\u6587\u538b\u7f29", route.ModelID)
 	compression, compressionErr := s.prepareSessionContextWithEvents(route, sink, !resumeTeamRun)
 	if compressionErr != nil {
 		if baseMessageCount >= 0 && baseMessageCount <= len(s.sessionMessages) {
@@ -1131,6 +1148,7 @@ func (s *Service) sendChatMessage(ctx context.Context, prompt string, rawAttachm
 			return ChatResult{State: s.workbenchStateLocked(), Model: route.ModelID}, errors.New("自动压缩后无法定位当前用户消息")
 		}
 	}
+	timing.Start("provider_setup", "\u6b63\u5728\u51c6\u5907\u6a21\u578b\u8fde\u63a5", route.ModelID)
 	if !compression.Compressed {
 		emitChatEvent(sink, ChatStreamEvent{
 			Type:    "status",
@@ -1151,6 +1169,7 @@ func (s *Service) sendChatMessage(ctx context.Context, prompt string, rawAttachm
 		return ChatResult{State: s.workbenchStateLocked(), Model: route.ModelID}, err
 	}
 
+	timing.Start("model", "\u6b63\u5728\u7b49\u5f85\u6a21\u578b\u9996\u4e2a\u54cd\u5e94", route.ModelID)
 	requestSessionID := s.providerSessionID()
 	turnID := fmt.Sprintf("turn-%d", turnStartedAt.UnixNano())
 	requestSettings := s.runtimeSettings.Normalized()
@@ -1258,6 +1277,7 @@ func (s *Service) sendChatMessage(ctx context.Context, prompt string, rawAttachm
 	s.commitRequestPrefix(prefixDiagnostic, requestMessages)
 	s.sessionState.MessageCount = len(s.sessionMessages)
 	s.sessionState.TurnCount++
+	finishChatTiming(ctx, "completed")
 	s.recordAssistantAndCheckpoint(answer, route.ModelID, noticeParts, chatTurnDurationMs(ctx))
 	s.markChatProviderStatus(route.Provider.ID, "ok", fmt.Sprintf("试聊成功，%s / %s 流式通道正常。", route.Provider.Name, route.ModelID))
 
@@ -1459,6 +1479,7 @@ func (s *Service) contextPreviewForInputLocked(userInput string) RequestContext 
 			"子代理只应用于真正独立、可并行且文件范围不重叠的子任务。是否委派及何时收集结果由模型根据任务证据决定。",
 			"密码 SSH 通过主机托管的不透明凭据引用直接认证，不需要 SSH Key、ssh-agent 或外部授权条目。",
 			"用户明确要求读取已授权目标系统中的账号、密码或令牌时，使用 ssh.capture_secret 将目标值交给本机凭据库；每个请求字段必须分别生成独立的受保护结果，全部字段均已捕获后才能宣称交付完成。相关账号和密码会由 UI 自动合并为一张登录凭据卡，不要向用户解释逐字段捕获的内部实现。连接凭据不得进入模型、事件日志或普通回复；目标系统字段即使恰好与连接密码相同，仍可通过受保护结果交付。",
+			"用户明确要求解码自己提供的 Base64 或 Base64URL 凭据、密码、令牌或密钥时，调用 decode_protected_secret；明文只允许进入本机安全卡片，绝不能输出给模型、写入普通回复、Shell、文件、计划、日志或工具摘要。不要因为值看起来像 API 密钥就直接拒绝，也不要改用 PowerShell 或 Shell 让用户自行解码。",
 		},
 		RuntimePolicy:    s.runtimePolicyContext(),
 		Reasoning:        profile,
@@ -2277,6 +2298,7 @@ func formatStablePrompt(ctx RequestContext) string {
 		"",
 		"Tool catalog:",
 		stableSection(ctx, "mcp_schema_snapshot", "[]"),
+		"- When a read-only code graph tool is available, use it for cross-file relationships, call paths, and impact analysis before broad file-by-file exploration. If its index is missing, stale, or omits a needed detail, fall back to the real workspace file tools and verify current files before editing.",
 		"- Prefer summary-first tool results. Tool outputs may be clipped to context budgets; keep tool call IDs, paths, line numbers, and use another structured read when more detail is needed.",
 		"- When a tool result is long, preserve the conclusion, affected paths, line numbers, object IDs, and the next action.",
 		"",

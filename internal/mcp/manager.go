@@ -159,7 +159,7 @@ func (m *Manager) connectServer(ctx context.Context, config ServerConfig, key st
 		return server
 	}
 
-	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "echocode", Title: "EchoCode", Version: "0.3.17"}, &sdkmcp.ClientOptions{
+	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "echocode", Title: "EchoCode", Version: "0.3.19"}, &sdkmcp.ClientOptions{
 		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 		KeepAlive: 30 * time.Second,
 		ToolListChangedHandler: func(context.Context, *sdkmcp.ToolListChangedRequest) {
@@ -285,6 +285,15 @@ func fetchServerTools(ctx context.Context, session *sdkmcp.ClientSession, config
 }
 
 func (m *Manager) Tools() []tools.Tool {
+	return m.ToolsForWorkspace("")
+}
+
+// ToolsForWorkspace binds per-session workspace context to remote tool
+// wrappers without reconnecting the shared MCP server. This is especially
+// important for background sessions: each runtime can query its own project
+// while other sessions continue using the same server connection.
+func (m *Manager) ToolsForWorkspace(workspaceRoot string) []tools.Tool {
+	workspaceRoot = canonicalWorkspaceRoot(workspaceRoot)
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	result := make([]tools.Tool, 0)
@@ -300,14 +309,17 @@ func (m *Manager) Tools() []tools.Tool {
 		sort.Strings(names)
 		for _, name := range names {
 			remote := server.tools[name]
+			schema := schemaObject(remote.InputSchema)
 			result = append(result, &RemoteTool{
-				manager:     m,
-				serverID:    id,
-				remoteName:  name,
-				name:        namespacedToolName(id, name),
-				description: strings.TrimSpace(remote.Description),
-				schema:      schemaObject(remote.InputSchema),
-				readOnly:    remote.Annotations != nil && remote.Annotations.ReadOnlyHint,
+				manager:           m,
+				serverID:          id,
+				remoteName:        name,
+				name:              namespacedToolName(id, name),
+				description:       strings.TrimSpace(remote.Description),
+				schema:            schema,
+				readOnly:          remote.Annotations != nil && remote.Annotations.ReadOnlyHint,
+				workspaceRoot:     workspaceRoot,
+				injectProjectPath: isLocalCodeGraphServer(server.config) && schemaHasProperty(schema, "projectPath"),
 			})
 		}
 	}
@@ -420,6 +432,53 @@ func workspaceRootURI(root string) string {
 		path = "/" + path
 	}
 	return (&url.URL{Scheme: "file", Path: path}).String()
+}
+
+func canonicalWorkspaceRoot(root string) string {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return ""
+	}
+	absolute, err := filepath.Abs(root)
+	if err != nil {
+		return filepath.Clean(root)
+	}
+	return filepath.Clean(absolute)
+}
+
+func isLocalCodeGraphServer(config ServerConfig) bool {
+	if config.Transport != TransportStdio {
+		return false
+	}
+	command := strings.Trim(strings.TrimSpace(config.Command), "\"'")
+	base := strings.ToLower(filepath.Base(command))
+	switch filepath.Ext(base) {
+	case ".exe", ".cmd", ".bat":
+		base = strings.TrimSuffix(base, filepath.Ext(base))
+	}
+	if base != "codegraph" {
+		return false
+	}
+	hasServe := false
+	hasMCP := false
+	for _, arg := range config.Args {
+		switch strings.ToLower(strings.TrimSpace(arg)) {
+		case "serve":
+			hasServe = true
+		case "--mcp":
+			hasMCP = true
+		}
+	}
+	return hasServe && hasMCP
+}
+
+func schemaHasProperty(schema map[string]any, name string) bool {
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		return false
+	}
+	_, ok = properties[name]
+	return ok
 }
 
 func namespacedToolName(serverID, toolName string) string {

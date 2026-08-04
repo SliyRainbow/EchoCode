@@ -3780,7 +3780,7 @@ function App() {
 
   return (
     <main
-      class="echocode-shell"
+      class="mh-shell"
       classList={{
         resizing: resizingSidebar(),
         "resizing-browser": resizingBrowserPanel(),
@@ -3833,7 +3833,7 @@ function App() {
           </section>
         )}
       </Show>
-      <aside class="echocode-sidebar" aria-label="EchoCode 导航">
+      <aside class="mh-sidebar" aria-label="EchoCode 导航">
         <div class="sidebar-top">
           <button
             class="ghost-icon"
@@ -5072,6 +5072,7 @@ function App() {
           </div>
           <SettingsCenter
             activeCategory={activeSettingsCategory()}
+			applyWorkbenchState={setState}
             apiKeyDraft={apiKeyDraft()}
             cacheHealth={cacheHealth()}
             cacheHitRate={cacheHitRate()}

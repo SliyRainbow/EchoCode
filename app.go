@@ -14,6 +14,7 @@ import (
 	"github.com/SliyRainbow/EchoCode/internal/automation"
 	"github.com/SliyRainbow/EchoCode/internal/browserengine"
 	"github.com/SliyRainbow/EchoCode/internal/computercontrol"
+	"github.com/SliyRainbow/EchoCode/internal/extensions"
 	"github.com/SliyRainbow/EchoCode/internal/storage"
 	"github.com/SliyRainbow/EchoCode/internal/terminal"
 	"github.com/SliyRainbow/EchoCode/internal/vault"
@@ -32,6 +33,7 @@ type App struct {
 	git               workspacegit.Service
 	updater           *appupdate.Service
 	automations       *automation.Service
+	extensions        *extensions.Service
 	runtimeSettingsMu sync.RWMutex
 	runtimeSettings   agent.RuntimeSettings
 }
@@ -58,6 +60,7 @@ func NewApp() *App {
 			CacheDir:       updateCacheDir(),
 		}),
 		automations: automations,
+		extensions:  newExtensionService(),
 	}
 	app.service = agent.NewService(agent.ServiceConfig{
 		AppVersion:             appVersion,

@@ -48,7 +48,14 @@ export function updateLiveTimelineParts(
 		const incomingTerminal = isTerminalTimelineStatus(status);
 		next[index] = currentTerminal && !incomingTerminal
 		  ? part
-		  : { ...part, message, status, toolCallId: event.toolCallId || part.toolCallId };
+		  : {
+			  ...part,
+			  message,
+			  status,
+			  toolCallId: event.toolCallId || part.toolCallId,
+			  durationMs: event.stageDurationMs ?? part.durationMs,
+			  completedAt: incomingTerminal ? part.completedAt || new Date().toISOString() : part.completedAt,
+			};
 		return next;
 	  }
 	}
@@ -58,6 +65,7 @@ export function updateLiveTimelineParts(
 	  message,
 	  status,
 	  toolCallId: event.toolCallId,
+	  durationMs: event.stageDurationMs,
 	  startedAt: new Date().toISOString(),
 	});
   return settled;

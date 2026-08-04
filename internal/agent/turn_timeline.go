@@ -60,7 +60,7 @@ func (s *Service) captureTurnTimelineEvent(event ChatStreamEvent) {
 				event.ToolCallID == "" && part.Message == message {
 				s.turnTimelineParts[index] = mergeTimelineNoteParts(part, tools.ResultPart{
 					Kind: tools.PartTimelineNote, Message: message, Status: status,
-					ToolCallID: strings.TrimSpace(event.ToolCallID),
+					ToolCallID: strings.TrimSpace(event.ToolCallID), DurationMs: event.StageDurationMs,
 				})
 				return
 			}
@@ -73,6 +73,7 @@ func (s *Service) captureTurnTimelineEvent(event ChatStreamEvent) {
 		s.turnTimelineParts = append(s.turnTimelineParts, tools.ResultPart{
 			Kind: tools.PartTimelineNote, Message: message, Status: status,
 			ToolCallID: strings.TrimSpace(event.ToolCallID),
+			DurationMs: event.StageDurationMs,
 			StartedAt:  time.Now().UTC().Format(time.RFC3339Nano),
 		})
 	case "tool":

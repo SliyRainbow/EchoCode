@@ -5,6 +5,7 @@ import {
   Brain,
   CalendarClock,
   Database,
+	Download,
   Folder,
   GitBranch,
   Globe2,
@@ -223,6 +224,7 @@ export const settingsGroups: Array<{
   {
     title: "集成",
     items: [
+		{ id: "extensions", label: "扩展中心", icon: () => <Download size={15} /> },
       { id: "mcp", label: "MCP 服务器", icon: () => <Plug size={15} /> },
 		{ id: "plugins", label: "插件", icon: () => <Blocks size={15} /> },
       { id: "browser", label: "浏览器", icon: () => <Globe2 size={15} /> },

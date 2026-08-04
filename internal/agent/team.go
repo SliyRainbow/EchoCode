@@ -356,6 +356,7 @@ func (s *Service) recordTeamPauseMessage(content, model string, parts []tools.Re
 	if s.eventStore == nil {
 		return
 	}
+	parts = s.mergeTurnTimelineParts(parts, content, "waiting")
 	durationMs := int64(0)
 	if len(durations) > 0 && durations[0] > 0 {
 		durationMs = durations[0]

@@ -5,7 +5,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"sort"
 	"strings"
 	"sync"
@@ -20,7 +19,7 @@ func transportForConfig(config ServerConfig) (sdkmcp.Transport, *tailBuffer, err
 		if config.Command == "" {
 			return nil, nil, fmt.Errorf("MCP %s 缺少启动命令", config.Name)
 		}
-		command := exec.Command(config.Command, config.Args...)
+		command := mcpCommand(config.Command, config.Args...)
 		command.Dir = config.WorkingDirectory
 		if command.Dir == "" {
 			command.Dir = config.WorkspaceRoot
