@@ -15,20 +15,23 @@ import (
 // ChatStreamEvent is the provider-independent progress contract used by the
 // desktop task runner. Stable event names keep the UI independent of each API.
 type ChatStreamEvent struct {
-	Type        string                   `json:"type"`
-	Delta       string                   `json:"delta,omitempty"`
-	Message     string                   `json:"message,omitempty"`
-	Model       string                   `json:"model,omitempty"`
-	ToolName    string                   `json:"toolName,omitempty"`
-	ToolCallID  string                   `json:"toolCallId,omitempty"`
-	ToolInput   string                   `json:"toolInput,omitempty"`
-	Status      string                   `json:"status,omitempty"`
-	Usage       *protocol.TokenUsage     `json:"usage,omitempty"`
-	UsageState  *LiveUsageState          `json:"usageState,omitempty"`
-	Progress    *tools.ResultPart        `json:"progress,omitempty"`
-	Parts       []tools.ResultPart       `json:"parts,omitempty"`
-	Compression *ContextCompressionEvent `json:"compression,omitempty"`
-	Team        *TeamRoleEvent           `json:"team,omitempty"`
+	Type            string                   `json:"type"`
+	Delta           string                   `json:"delta,omitempty"`
+	Message         string                   `json:"message,omitempty"`
+	Phase           string                   `json:"phase,omitempty"`
+	ElapsedMs       int64                    `json:"elapsedMs,omitempty"`
+	StageDurationMs int64                    `json:"stageDurationMs,omitempty"`
+	Model           string                   `json:"model,omitempty"`
+	ToolName        string                   `json:"toolName,omitempty"`
+	ToolCallID      string                   `json:"toolCallId,omitempty"`
+	ToolInput       string                   `json:"toolInput,omitempty"`
+	Status          string                   `json:"status,omitempty"`
+	Usage           *protocol.TokenUsage     `json:"usage,omitempty"`
+	UsageState      *LiveUsageState          `json:"usageState,omitempty"`
+	Progress        *tools.ResultPart        `json:"progress,omitempty"`
+	Parts           []tools.ResultPart       `json:"parts,omitempty"`
+	Compression     *ContextCompressionEvent `json:"compression,omitempty"`
+	Team            *TeamRoleEvent           `json:"team,omitempty"`
 }
 
 // ContextCompressionEvent exposes automatic context compaction as a first-class
@@ -134,6 +137,9 @@ func collectProviderStreamWithTiming(
 
 	var events <-chan protocol.StreamEvent
 	openStartedAt := time.Now()
+	streamStartedAt := openStartedAt
+	firstProviderEvent := true
+	firstTextEvent := true
 	openTimer := time.NewTimer(timing.OpenTimeout)
 	openHeartbeat := time.NewTicker(timing.HeartbeatInterval)
 	openComplete := false
@@ -167,6 +173,7 @@ func collectProviderStreamWithTiming(
 				return protocol.CompletionResult{}, errors.New("provider returned a nil event stream")
 			}
 			events = result.events
+			emitProviderTimingEvent(ctx, sink, request.Model, "provider_connected", "模型连接已建立", openStartedAt, "completed")
 			openComplete = true
 		}
 	}
@@ -241,9 +248,17 @@ func collectProviderStreamWithTiming(
 				return partialResult(), nil
 			}
 			resetIdleTimer()
+			if firstProviderEvent {
+				firstProviderEvent = false
+				emitProviderTimingEvent(ctx, sink, request.Model, "provider_first_event", "已收到模型首个响应事件", streamStartedAt, "completed")
+			}
 		}
 		switch event.Type {
 		case "delta":
+			if firstTextEvent {
+				firstTextEvent = false
+				emitProviderTimingEvent(ctx, sink, request.Model, "provider_first_text", "已收到模型首个文字输出", streamStartedAt, "completed")
+			}
 			content.WriteString(event.Delta)
 			emitChatEvent(sink, ChatStreamEvent{Type: "delta", Delta: event.Delta})
 		case "reasoning":

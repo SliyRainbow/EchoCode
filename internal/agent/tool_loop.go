@@ -67,6 +67,7 @@ func (s *Service) runToolLoopTurn(
 	// 默认关闭，避免每轮翻倍调用、破坏缓存经济性（符合真实工具的显式规划做法）。
 	profile, _ := ReasoningProfileFor(s.reasoning)
 	if s.planMode && !isGuidanceChatTurn(ctx) && profile.Budget.Planner && strings.TrimSpace(s.runtimeSettings.WorkspaceRoot) != "" {
+		startChatTiming(ctx, "plan", "\u6b63\u5728\u751f\u6210\u6267\u884c\u8ba1\u5212", route.ModelID)
 		emitChatEvent(sink, ChatStreamEvent{Type: "status", Message: "正在生成执行计划", Model: route.ModelID})
 		planRequest := baseRequest
 		plan, _, planErr := s.runPlanPhase(ctx, caller, planRequest, route, sink)
@@ -101,6 +102,7 @@ func (s *Service) runToolLoopTurn(
 				parts := []tools.ResultPart{{Kind: tools.PartText, Text: plan}}
 				s.sessionMessages = s.appendProtocolAssistantMessage(s.sessionMessages, answer, parts)
 				s.sessionState.MessageCount = len(s.sessionMessages)
+				finishChatTiming(ctx, "completed")
 				s.recordAssistantAndCheckpoint(answer, route.ModelID, parts, chatTurnDurationMs(ctx))
 				s.markChatProviderStatus(route.Provider.ID, "ok", "计划已生成，等待下一步。")
 				return ChatResult{
@@ -126,6 +128,7 @@ func (s *Service) runToolLoopTurn(
 	}
 
 	emitChatEvent(sink, ChatStreamEvent{Type: "status", Message: "正在分析任务", Model: route.ModelID})
+	startChatTiming(ctx, "execution", "\u6b63\u5728\u6267\u884c Agent \u4efb\u52a1", route.ModelID)
 	executionCtx := withSubagentExecutionScope(ctx, subagentExecutionScope{
 		BaseRequest:  execRequest,
 		PrimaryRoute: route,
@@ -201,6 +204,7 @@ func (s *Service) runToolLoopTurn(
 	s.sessionState.MessageCount = len(s.sessionMessages)
 	s.sessionState.TurnCount++
 	// 文件快照已在每次工具写入后立即记录，这里只提交 assistant + checkpoint。
+	finishChatTiming(ctx, "completed")
 	s.recordAssistantAndCheckpoint(answer, route.ModelID, outcome.Parts, chatTurnDurationMs(ctx))
 	s.markChatProviderStatus(route.Provider.ID, "ok", fmt.Sprintf("试聊成功，%s / %s 工具会话完成，产出 %d 个片段。", route.Provider.Name, route.ModelID, len(outcome.Parts)))
 
@@ -344,6 +348,7 @@ func (s *Service) buildMutableToolRegistryForContext(ctx context.Context, includ
 	reg := tools.NewRegistry()
 	reg.Add(ReportProgressTool{})
 	reg.Add(LoadSkillTool{Service: s})
+	reg.Add(DecodeProtectedSecretTool{Capture: s.storeSecretResult})
 	if includePlan {
 		reg.Add(tools.UpdatePlanTool{OnUpdate: s.updatePlanState})
 	}
@@ -409,7 +414,7 @@ func (s *Service) buildMutableToolRegistryForContext(ctx context.Context, includ
 	// MCP tools stay hidden because their local path boundary is not generally
 	// enforceable by the host.
 	if s.mcpManager != nil {
-		for _, remoteTool := range s.mcpManager.Tools() {
+		for _, remoteTool := range s.mcpManager.ToolsForWorkspace(s.runtimeSettings.WorkspaceRoot) {
 			if readOnly || policy.TaskScopeEnabled {
 				readOnlyTool, ok := remoteTool.(interface{ ReadOnly() bool })
 				if !ok || !readOnlyTool.ReadOnly() {
@@ -441,6 +446,7 @@ func (s *Service) buildReadOnlyRegistryForContext(ctx context.Context) *tools.Re
 	reg := tools.NewRegistry(
 		ReportProgressTool{},
 		LoadSkillTool{Service: s},
+		DecodeProtectedSecretTool{Capture: s.storeSecretResult},
 		tools.ReadFileTool{Policy: policy},
 		tools.FileInfoTool{Policy: policy},
 		tools.ListDirTool{Policy: policy},
@@ -460,7 +466,7 @@ func (s *Service) buildReadOnlyRegistryForContext(ctx context.Context) *tools.Re
 		reg.Add(tools.WebSearchTool{Policy: policy})
 	}
 	if s.mcpManager != nil {
-		for _, remoteTool := range s.mcpManager.Tools() {
+		for _, remoteTool := range s.mcpManager.ToolsForWorkspace(s.runtimeSettings.WorkspaceRoot) {
 			readOnlyTool, ok := remoteTool.(interface{ ReadOnly() bool })
 			if ok && readOnlyTool.ReadOnly() {
 				reg.Add(remoteTool)
@@ -2208,6 +2214,10 @@ func toolInputForDisplay(name string, rawArgs json.RawMessage) string {
 	}
 	key := "path"
 	switch name {
+	case "decode_protected_secret":
+		// The encoded value is still sensitive input. Only expose the safe-card
+		// action in approvals, progress events, and the durable timeline.
+		return "已接收编码值，正在保存为安全卡片"
 	case "load_skill":
 		key = "name"
 	case "search", "web_search":
@@ -2240,6 +2250,17 @@ func toolInputForDisplay(name string, rawArgs json.RawMessage) string {
 		action, _ := args["action"].(string)
 		windowID, _ := args["window_id"].(string)
 		return strings.TrimSpace(action + " " + windowID)
+	default:
+		if strings.Contains(strings.ToLower(name), "__codegraph_") {
+			for _, candidate := range []string{"query", "symbol", "file", "path", "pattern"} {
+				if value, _ := args[candidate].(string); strings.TrimSpace(value) != "" {
+					return strings.TrimSpace(value)
+				}
+			}
+			if strings.HasSuffix(strings.ToLower(name), "__codegraph_status") {
+				return "检查代码索引状态"
+			}
+		}
 	}
 	value, _ := args[key].(string)
 	return value

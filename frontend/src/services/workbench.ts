@@ -1,6 +1,6 @@
 import { defaultReasoningLevel, reasoningOptions } from "../state/reasoning";
 import { defaultTeamSettings } from "../team-config";
-import type { AppInfo, AutomationState, AutomationTask, ChatAttachment, ChatResult, ChatTaskEvent, ChatTaskState, ApprovalRequest, BranchInfo, BrowserFrame, BrowserInspector, BrowserPreview, BrowserState, CheckpointInfo, GitDiff, GitStatus, MessagePart, OpenSourceLicense, ProjectInfo, ProjectNode, SecretResultReveal, SessionInfo, SessionMessage, ReasoningLevel, RuntimeSettings, ServerSnapshot, SkillDetail, SkillImportResult, SkillIndexEntry, TerminalSessionState, UpdateState, UsageBillingReconciliationInput, UsageBillingReport, UsageBillingSyncInput, WorkbenchState, WorkspaceDirectoryListing, WorkspaceFilePreview } from "../types";
+import type { AppInfo, AutomationState, AutomationTask, ChatAttachment, ChatResult, ChatTaskEvent, ChatTaskState, ApprovalRequest, BranchInfo, BrowserFrame, BrowserInspector, BrowserPreview, BrowserState, CheckpointInfo, ExtensionActionResult, ExtensionCatalogState, ExtensionOperationResult, GitDiff, GitStatus, MessagePart, OpenSourceLicense, ProjectInfo, ProjectNode, SecretResultReveal, SessionInfo, SessionMessage, ReasoningLevel, RuntimeSettings, ServerSnapshot, SkillDetail, SkillImportResult, SkillIndexEntry, TerminalSessionState, UpdateState, UsageBillingReconciliationInput, UsageBillingReport, UsageBillingSyncInput, WorkbenchState, WorkspaceDirectoryListing, WorkspaceFilePreview } from "../types";
 
 type WailsAppBinding = {
   GetWorkbenchState: () => Promise<WorkbenchState>;
@@ -53,6 +53,12 @@ type WailsAppBinding = {
   DeleteModelProvider?: (providerID: string) => Promise<WorkbenchState>;
   RefreshModelProviderModels: (providerID: string) => Promise<WorkbenchState>;
   RefreshMCPServer?: (serverID: string) => Promise<WorkbenchState>;
+	GetExtensionCatalog?: () => Promise<ExtensionCatalogState>;
+	RefreshExtensionCatalog?: () => Promise<ExtensionCatalogState>;
+	InstallExtension?: (id: string) => Promise<ExtensionOperationResult>;
+	UninstallExtension?: (id: string) => Promise<ExtensionOperationResult>;
+	RevealExtension?: (id: string) => Promise<void>;
+	RunExtensionProjectAction?: (id: string, actionID: string) => Promise<ExtensionActionResult>;
 	RefreshPlugins?: () => Promise<WorkbenchState>;
 	SelectPluginDirectory?: () => Promise<string>;
 	InstallPlugin?: (source: string) => Promise<WorkbenchState>;
@@ -208,6 +214,53 @@ const fallbackSnapshots: ServerSnapshot[] = [
     ],
   },
 ];
+
+let fallbackExtensionCatalog: ExtensionCatalogState = {
+	registryUrl: "https://raw.githubusercontent.com/SliyRainbow/EchoCode_Extensions/main/registry.json",
+	source: "preview",
+	checkedAt: new Date().toISOString(),
+	packages: [{
+		id: "mcp.codegraph",
+		type: "mcp",
+		name: "CodeGraph",
+		summary: "为 Agent 提供本地代码关系图、调用链、符号源码与影响分析。",
+		publisher: "Colby Mchenry",
+		featured: true,
+		sourceVerified: true,
+		manifestUrl: "https://raw.githubusercontent.com/SliyRainbow/EchoCode_Extensions/main/packages/mcp/codegraph/manifest.json",
+		updateAvailable: false,
+		platformAvailable: true,
+		manifest: {
+			schemaVersion: 1,
+			id: "mcp.codegraph",
+			type: "mcp",
+			name: "CodeGraph",
+			version: "1.5.0",
+			channel: "stable",
+			summary: "为 Agent 提供本地代码关系图、调用链、符号源码与影响分析。",
+			description: "CodeGraph 在本地为项目建立语义代码索引。EchoCode 通过只读 MCP 工具调用它，并继续使用自身的文件编辑、审批、沙箱和测试工具完成修改。",
+			publisher: {name: "Colby Mchenry", url: "https://github.com/colbymchenry"},
+			source: {
+				repository: "https://github.com/colbymchenry/codegraph",
+				release: "https://github.com/colbymchenry/codegraph/releases/tag/v1.5.0",
+				thirdParty: true,
+			},
+			license: {spdx: "MIT", file: "third_party/codegraph/LICENSE"},
+			categories: ["development", "code-intelligence"],
+			capabilities: ["代码关系分析", "调用链", "符号源码", "修改影响范围"],
+			permissions: [
+				{id: "process.spawn", required: true, reason: "作为本地 stdio MCP 子进程运行。"},
+				{id: "workspace.read", required: true, reason: "读取用户已授权项目及其 .codegraph 索引。"},
+				{id: "workspace.metadata.write", required: false, reason: "仅在用户明确建立或同步索引时写入项目内的 .codegraph 目录。"},
+			],
+			projectActions: [
+				{id: "init-index", label: "建立索引", args: [], requiresConfirmation: true, writes: ["${workspaceRoot}/.codegraph"]},
+				{id: "sync-index", label: "同步索引", args: [], requiresConfirmation: true, writes: ["${workspaceRoot}/.codegraph"]},
+				{id: "index-status", label: "检查索引", args: [], requiresConfirmation: false},
+			],
+		},
+	}],
+};
 
 let fallbackState = createFallbackState(defaultReasoningLevel);
 const fallbackChatHandlers = new Set<(event: ChatTaskEvent) => void>();
@@ -553,7 +606,7 @@ export function onMCPState(handler: (state: WorkbenchState) => void): () => void
 
 const fallbackAppInfo: AppInfo = {
   name: "EchoCode",
-  version: "0.3.17",
+  version: "0.3.19",
   goVersion: "浏览器预览",
   operatingSystem: "web",
   architecture: "preview",
@@ -961,6 +1014,113 @@ export async function refreshMCPServer(serverID: string): Promise<WorkbenchState
   return cloneState(fallbackState);
 }
 
+export async function getExtensionCatalog(): Promise<ExtensionCatalogState> {
+	const binding = wailsBinding();
+	if (binding?.GetExtensionCatalog) {
+		return binding.GetExtensionCatalog();
+	}
+	return cloneExtensionCatalog(fallbackExtensionCatalog);
+}
+
+export async function refreshExtensionCatalog(): Promise<ExtensionCatalogState> {
+	const binding = wailsBinding();
+	if (binding?.RefreshExtensionCatalog) {
+		return binding.RefreshExtensionCatalog();
+	}
+	fallbackExtensionCatalog = {...fallbackExtensionCatalog, checkedAt: new Date().toISOString(), source: "preview"};
+	return cloneExtensionCatalog(fallbackExtensionCatalog);
+}
+
+export async function installExtension(id: string): Promise<ExtensionOperationResult> {
+	const binding = wailsBinding();
+	if (binding?.InstallExtension) {
+		return binding.InstallExtension(id);
+	}
+	const item = fallbackExtensionCatalog.packages.find((entry) => entry.id === id);
+	if (!item) throw new Error(`扩展不存在：${id}`);
+	const installedAt = new Date().toISOString();
+	fallbackExtensionCatalog = {
+		...fallbackExtensionCatalog,
+		packages: fallbackExtensionCatalog.packages.map((entry) => entry.id === id ? {
+			...entry,
+			installed: {
+				id: entry.id,
+				type: entry.type,
+				name: entry.name,
+				version: entry.manifest.version,
+				platform: "windows",
+				arch: "x64",
+				installDir: "%LOCALAPPDATA%\\EchoCode\\extensions\\mcp.codegraph\\1.5.0\\windows-x64",
+				executable: "%LOCALAPPDATA%\\EchoCode\\extensions\\mcp.codegraph\\1.5.0\\windows-x64\\bin\\codegraph.cmd",
+				installedAt,
+			},
+		} : entry),
+	};
+	if (!fallbackState.runtimeSettings.mcp.servers.some((server) => server.id === id)) {
+		fallbackState = {
+			...fallbackState,
+			runtimeSettings: {
+				...fallbackState.runtimeSettings,
+				mcp: {...fallbackState.runtimeSettings.mcp, servers: [...fallbackState.runtimeSettings.mcp.servers, {
+					id,
+					name: item.name,
+					transport: "stdio",
+					command: "codegraph.cmd",
+					args: ["serve", "--mcp"],
+					env: [],
+					passEnvironment: [],
+					workingDirectory: "",
+					url: "",
+					headers: [],
+					enabled: true,
+					toolResultPolicy: "summary-first",
+				}]},
+			},
+		};
+	}
+	return {catalog: cloneExtensionCatalog(fallbackExtensionCatalog), state: cloneState(fallbackState)};
+}
+
+export async function uninstallExtension(id: string): Promise<ExtensionOperationResult> {
+	const binding = wailsBinding();
+	if (binding?.UninstallExtension) {
+		return binding.UninstallExtension(id);
+	}
+	fallbackExtensionCatalog = {
+		...fallbackExtensionCatalog,
+		packages: fallbackExtensionCatalog.packages.map((entry) => entry.id === id ? {...entry, installed: undefined} : entry),
+	};
+	fallbackState = {
+		...fallbackState,
+		runtimeSettings: {
+			...fallbackState.runtimeSettings,
+			mcp: {...fallbackState.runtimeSettings.mcp, servers: fallbackState.runtimeSettings.mcp.servers.filter((server) => server.id !== id)},
+		},
+	};
+	return {catalog: cloneExtensionCatalog(fallbackExtensionCatalog), state: cloneState(fallbackState)};
+}
+
+export async function revealExtension(id: string): Promise<void> {
+	const binding = wailsBinding();
+	if (binding?.RevealExtension) {
+		return binding.RevealExtension(id);
+	}
+	throw new Error(`浏览器预览不能打开扩展目录：${id}`);
+}
+
+export async function runExtensionProjectAction(id: string, actionID: string): Promise<ExtensionActionResult> {
+	const binding = wailsBinding();
+	if (binding?.RunExtensionProjectAction) {
+		return binding.RunExtensionProjectAction(id, actionID);
+	}
+	return {
+		id: actionID,
+		output: `预览模式：${id} 已模拟执行 ${actionID}。桌面应用会在当前项目中运行真实操作。`,
+		exitCode: 0,
+		durationMs: 320,
+	};
+}
+
 export async function refreshPlugins(): Promise<WorkbenchState> {
 	const binding = wailsBinding();
 	if (binding?.RefreshPlugins) {
@@ -1003,6 +1163,10 @@ export async function revealPlugin(id: string): Promise<void> {
 
 function wailsBinding(): WailsAppBinding | undefined {
   return (window as WailsWindow).go?.main?.App;
+}
+
+function cloneExtensionCatalog(state: ExtensionCatalogState): ExtensionCatalogState {
+	return JSON.parse(JSON.stringify(state)) as ExtensionCatalogState;
 }
 
 // 列出当前会话的可回退检查点。浏览器预览模式返回空列表。

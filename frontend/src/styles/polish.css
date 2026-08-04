@@ -48,7 +48,7 @@
 
 :root[data-theme="light"],
 body[data-theme="light"],
-.echocode-shell.theme-light {
+.mh-shell.theme-light {
   color-scheme: light;
   --bg-main: #fafafa;
   --bg-sidebar: #f3f3f3;
@@ -108,12 +108,12 @@ kbd,
   font-family: var(--mono);
 }
 
-.echocode-shell :where(button, input, textarea, select, [contenteditable="true"]):focus-visible {
+.mh-shell :where(button, input, textarea, select, [contenteditable="true"]):focus-visible {
   outline: 2px solid color-mix(in srgb, var(--focus-outline) 72%, transparent);
   outline-offset: 1px;
 }
 
-.echocode-shell {
+.mh-shell {
   grid-template-columns: var(--sidebar-width, 268px) 6px minmax(0, 1fr);
 	grid-template-rows: var(--app-titlebar-height) minmax(0, 1fr);
   width: 100vw;
@@ -121,13 +121,13 @@ kbd,
   zoom: 1;
 }
 
-:root[data-ui-scale-mode="manual"] .echocode-shell {
+:root[data-ui-scale-mode="manual"] .mh-shell {
   width: var(--ui-layout-width, 100vw);
   height: var(--ui-layout-height, 100vh);
   zoom: var(--ui-scale, 1);
 }
 
-.echocode-sidebar {
+.mh-sidebar {
   height: 100%;
   background: var(--bg-sidebar);
 }
@@ -142,14 +142,14 @@ kbd,
 }
 
 @media (max-width: 860px) {
-  .echocode-shell {
+  .mh-shell {
     grid-template-columns: minmax(0, 1fr);
 		grid-template-rows: var(--app-titlebar-height) minmax(0, 1fr);
 		height: var(--ui-layout-height, 100vh);
 		min-height: 0;
   }
 
-  .echocode-sidebar,
+  .mh-sidebar,
   .sidebar-resizer {
     display: none;
   }
@@ -171,7 +171,7 @@ kbd,
 
 :root[data-theme="light"],
 body[data-theme="light"],
-.echocode-shell.theme-light {
+.mh-shell.theme-light {
   --text-secondary: #505050;
   --text-muted: #686868;
 }
@@ -244,7 +244,7 @@ body[data-theme="light"],
 
 :root[data-theme="light"] .error-strip,
 body[data-theme="light"] .error-strip,
-.echocode-shell.theme-light .error-strip {
+.mh-shell.theme-light .error-strip {
   color: #7d1f2c;
   background: #fff0f1;
   border-color: #d36a75;
@@ -252,10 +252,10 @@ body[data-theme="light"] .error-strip,
 
 :root[data-theme="light"] .browser-preview-error,
 body[data-theme="light"] .browser-preview-error,
-.echocode-shell.theme-light .browser-preview-error,
+.mh-shell.theme-light .browser-preview-error,
 :root[data-theme="light"] .review-error,
 body[data-theme="light"] .review-error,
-.echocode-shell.theme-light .review-error {
+.mh-shell.theme-light .review-error {
   color: #7d1f2c;
   background: #fff4f4;
   border-color: #d36a75;
@@ -516,7 +516,7 @@ body[data-theme="light"] .review-error,
   text-decoration: none;
 }
 
-.echocode-shell :where(.composer-text-editor, .composer-tail-editor):focus-visible {
+.mh-shell :where(.composer-text-editor, .composer-tail-editor):focus-visible {
   outline: 0;
 }
 
@@ -625,7 +625,7 @@ body[data-theme="light"] .review-error,
   background: var(--drawer-bg);
 }
 
-.echocode-shell :is(.approval-overlay, .image-viewer-overlay, .link-open-overlay) {
+.mh-shell :is(.approval-overlay, .image-viewer-overlay, .link-open-overlay) {
   inset: 0 auto auto 0;
   width: var(--ui-layout-width, 100vw);
   height: var(--ui-layout-height, 100vh);
@@ -1037,6 +1037,10 @@ body[data-theme="light"] .review-error,
   padding-top: 12px;
 }
 
+.settings-page-body.extension-center-page {
+  padding-top: 0;
+}
+
 .app-confirm-overlay {
   position: fixed;
   inset: 0;
@@ -1299,10 +1303,10 @@ body[data-theme="light"] .app-confirm-overlay {
 .browser-preview-error.status { color: var(--text-secondary); background: var(--bg-card); }
 :root[data-theme="light"] .error-strip,
 body[data-theme="light"] .error-strip,
-.echocode-shell.theme-light .error-strip { color: #7b1725; background: #fff0f2; border-color: #cc5968; }
+.mh-shell.theme-light .error-strip { color: #7b1725; background: #fff0f2; border-color: #cc5968; }
 :root[data-theme="light"] .browser-preview-error,
 body[data-theme="light"] .browser-preview-error,
-.echocode-shell.theme-light .browser-preview-error,
+.mh-shell.theme-light .browser-preview-error,
 :root[data-theme="light"] .review-error,
 body[data-theme="light"] .review-error,
-.echocode-shell.theme-light .review-error { color: #7d1f2c; background: #fff4f4; border-color: #d36a75; }
+.mh-shell.theme-light .review-error { color: #7d1f2c; background: #fff4f4; border-color: #d36a75; }

@@ -12,13 +12,15 @@ import (
 )
 
 type RemoteTool struct {
-	manager     *Manager
-	serverID    string
-	remoteName  string
-	name        string
-	description string
-	schema      map[string]any
-	readOnly    bool
+	manager           *Manager
+	serverID          string
+	remoteName        string
+	name              string
+	description       string
+	schema            map[string]any
+	readOnly          bool
+	workspaceRoot     string
+	injectProjectPath bool
 }
 
 func (t *RemoteTool) Name() string { return t.name }
@@ -38,16 +40,41 @@ func (t *RemoteTool) Execute(ctx context.Context, rawArgs json.RawMessage) (tool
 	if t.manager == nil {
 		return tools.Result{}, errors.New("MCP manager 不可用")
 	}
+	arguments, effectiveArgs, workingDirectory, err := t.argumentsForCall(rawArgs)
+	if err != nil {
+		return tools.Result{}, err
+	}
+	return t.manager.callTool(ctx, t.serverID, t.remoteName, t.name, arguments, effectiveArgs, workingDirectory)
+}
+
+func (t *RemoteTool) argumentsForCall(rawArgs json.RawMessage) (map[string]any, json.RawMessage, string, error) {
 	var arguments map[string]any
 	if len(rawArgs) == 0 {
 		arguments = map[string]any{}
 	} else if err := json.Unmarshal(rawArgs, &arguments); err != nil {
-		return tools.Result{}, fmt.Errorf("MCP 工具参数不是有效 JSON 对象: %w", err)
+		return nil, nil, "", fmt.Errorf("MCP 工具参数不是有效 JSON 对象: %w", err)
 	}
-	return t.manager.callTool(ctx, t.serverID, t.remoteName, t.name, arguments, rawArgs)
+	if arguments == nil {
+		arguments = map[string]any{}
+	}
+	if t.injectProjectPath && t.workspaceRoot != "" {
+		if _, exists := arguments["projectPath"]; !exists {
+			arguments["projectPath"] = t.workspaceRoot
+		}
+	}
+	effectiveArgs, err := json.Marshal(arguments)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("编码 MCP 工具参数失败: %w", err)
+	}
+	workingDirectory := ""
+	if t.injectProjectPath {
+		workingDirectory, _ = arguments["projectPath"].(string)
+		workingDirectory = strings.TrimSpace(workingDirectory)
+	}
+	return arguments, effectiveArgs, workingDirectory, nil
 }
 
-func (m *Manager) callTool(ctx context.Context, serverID, remoteName, displayName string, arguments map[string]any, rawArgs json.RawMessage) (tools.Result, error) {
+func (m *Manager) callTool(ctx context.Context, serverID, remoteName, displayName string, arguments map[string]any, rawArgs json.RawMessage, workingDirectory string) (tools.Result, error) {
 	m.mu.RLock()
 	server := m.servers[serverID]
 	if server == nil || server.session == nil || server.status.State != "ready" {
@@ -57,12 +84,17 @@ func (m *Manager) callTool(ctx context.Context, serverID, remoteName, displayNam
 	session := server.session
 	resultPolicy := server.config.ToolResultPolicy
 	m.mu.RUnlock()
+	input := remoteToolInputForDisplay(remoteName, arguments)
+	if input == "" {
+		input = truncateText(string(rawArgs), 1200)
+	}
 	tools.EmitProgress(ctx, tools.ResultPart{
-		Kind:   tools.PartToolCall,
-		Name:   displayName,
-		Status: "waiting",
-		Input:  truncateText(string(rawArgs), 1200),
-		Output: fmt.Sprintf("正在等待 MCP 服务器 %s 返回结果", serverID),
+		Kind:             tools.PartToolCall,
+		Name:             displayName,
+		Status:           "waiting",
+		Input:            input,
+		Output:           fmt.Sprintf("正在等待 MCP 服务器 %s 返回结果", serverID),
+		WorkingDirectory: workingDirectory,
 	})
 	result, err := session.CallTool(ctx, &sdkmcp.CallToolParams{Name: remoteName, Arguments: arguments})
 	if err != nil {
@@ -82,13 +114,32 @@ func (m *Manager) callTool(ctx context.Context, serverID, remoteName, displayNam
 		Summary: summary,
 		IsError: result.IsError,
 		Parts: []tools.ResultPart{{
-			Kind:   tools.PartToolCall,
-			Name:   displayName,
-			Status: status,
-			Input:  truncateText(string(rawArgs), 1200),
-			Output: summary,
+			Kind:             tools.PartToolCall,
+			Name:             displayName,
+			Status:           status,
+			Input:            input,
+			Output:           summary,
+			WorkingDirectory: workingDirectory,
 		}},
 	}, nil
+}
+
+func remoteToolInputForDisplay(remoteName string, arguments map[string]any) string {
+	name := strings.ToLower(strings.TrimSpace(remoteName))
+	keys := []string{"query", "symbol", "file", "path", "url", "action", "name"}
+	if name == "codegraph_node" {
+		keys = []string{"symbol", "file"}
+	} else if name == "codegraph_files" {
+		keys = []string{"path", "pattern"}
+	} else if name == "codegraph_status" {
+		return "检查代码索引状态"
+	}
+	for _, key := range keys {
+		if value, ok := arguments[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func summarizeCallToolResult(result *sdkmcp.CallToolResult, policy string) string {

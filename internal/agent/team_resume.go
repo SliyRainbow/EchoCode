@@ -147,6 +147,7 @@ func (s *Service) runTeamTurn(
 		s.sessionMessages = s.appendProtocolAssistantMessage(s.sessionMessages, answer, resultParts)
 		s.commitRequestPrefix(prefixDiagnostic, requestMessages)
 		s.sessionState.MessageCount = len(s.sessionMessages)
+		finishChatTiming(ctx, "waiting")
 		s.recordTeamPauseMessage(answer, model, resultParts, chatTurnDurationMs(ctx))
 
 		cancelErr := ctx.Err()
@@ -276,6 +277,7 @@ func (s *Service) runTeamTurn(
 					s.commitRequestPrefix(prefixDiagnostic, requestMessages)
 					s.sessionState.MessageCount = len(s.sessionMessages)
 					s.sessionState.TurnCount++
+					finishChatTiming(ctx, "completed")
 					s.recordAssistantAndCheckpoint(answer, plan.route.ModelID, parts, chatTurnDurationMs(ctx))
 					return ChatResult{Content: answer, Model: plan.route.ModelID, Usage: aggregate, State: s.workbenchStateLocked(), Parts: parts}, nil
 				}
@@ -420,6 +422,7 @@ func (s *Service) runTeamTurn(
 			s.commitRequestPrefix(prefixDiagnostic, requestMessages)
 			s.sessionState.MessageCount = len(s.sessionMessages)
 			s.sessionState.TurnCount++
+			finishChatTiming(ctx, "completed")
 			s.recordAssistantAndCheckpoint(answer, model, parts, chatTurnDurationMs(ctx))
 			s.markChatProviderStatus(primary.Provider.ID, "ok", fmt.Sprintf("AI 团队任务完成，共执行 %d 个角色回合。", len(artifacts)))
 			return ChatResult{Content: answer, Model: model, Usage: aggregate, State: s.workbenchStateLocked(), Parts: parts}, nil

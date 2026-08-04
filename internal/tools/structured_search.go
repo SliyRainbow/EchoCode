@@ -638,6 +638,7 @@ func resolveStructuredSearchRoot(policy SandboxPolicy, input string) (string, er
 	if err != nil {
 		return "", fmt.Errorf("cannot access search path: %w", err)
 	}
+	resolved = normalizeResolvedSearchRoot(root, resolved)
 	resolved, err = policy.ResolveReadPath(resolved)
 	if err != nil {
 		return "", fmt.Errorf("resolved search path is outside the allowed roots: %w", err)
@@ -645,18 +646,57 @@ func resolveStructuredSearchRoot(policy SandboxPolicy, input string) (string, er
 	return filepath.Clean(resolved), nil
 }
 
+func normalizeResolvedSearchRoot(original, resolved string) string {
+	resolved = filepath.Clean(resolved)
+	if filepath.IsAbs(resolved) {
+		return resolved
+	}
+	return filepath.Clean(original)
+}
+
 func stableSearchPath(policy SandboxPolicy, absolutePath string) string {
-	workspace, err := filepath.Abs(policy.WorkspaceRoot)
-	if err == nil && pathWithinRoot(absolutePath, workspace) {
-		relative, relErr := filepath.Rel(workspace, absolutePath)
-		if relErr == nil {
-			if relative == "." {
-				return "."
+	workspace, workspaceErr := filepath.Abs(policy.WorkspaceRoot)
+	if workspaceErr == nil {
+		if relative, ok := relativeSearchDisplayPath(workspace, absolutePath); ok {
+			return relative
+		}
+		canonicalWorkspace, canonicalWorkspaceErr := canonicalSearchDisplayPath(workspace)
+		canonicalTarget, canonicalTargetErr := canonicalSearchDisplayPath(absolutePath)
+		if canonicalWorkspaceErr == nil && canonicalTargetErr == nil {
+			if relative, ok := relativeSearchDisplayPath(canonicalWorkspace, canonicalTarget); ok {
+				return relative
 			}
-			return filepath.ToSlash(relative)
 		}
 	}
 	return filepath.ToSlash(filepath.Clean(absolutePath))
+}
+
+func relativeSearchDisplayPath(workspace, target string) (string, bool) {
+	relative, err := filepath.Rel(workspace, target)
+	if err != nil || !searchRelativePathStaysWithinRoot(relative) {
+		return "", false
+	}
+	if relative == "." {
+		return ".", true
+	}
+	return filepath.ToSlash(relative), true
+}
+
+func canonicalSearchDisplayPath(path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return filepath.Clean(absolute), nil
+	}
+	return normalizeResolvedSearchRoot(absolute, resolved), nil
+}
+
+func searchRelativePathStaysWithinRoot(relative string) bool {
+	relative = filepath.Clean(relative)
+	return !filepath.IsAbs(relative) && relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator))
 }
 
 func normalizeStructuredSearchLimit(value int) int {

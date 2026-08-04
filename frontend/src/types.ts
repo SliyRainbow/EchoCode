@@ -37,6 +37,85 @@ export type SkillImportResult = {
   state: WorkbenchState;
 };
 
+export type ExtensionPermission = {
+  id: string;
+  required: boolean;
+  reason: string;
+};
+
+export type ExtensionProjectAction = {
+  id: string;
+  label: string;
+  args: string[];
+  requiresConfirmation: boolean;
+  writes?: string[];
+};
+
+export type ExtensionManifest = {
+  schemaVersion: number;
+  id: string;
+  type: "mcp" | "plugin" | "skill" | string;
+  name: string;
+  version: string;
+  channel: string;
+  summary: string;
+  description: string;
+  publisher: { name: string; url: string };
+  source: { repository: string; release: string; thirdParty: boolean };
+  license: { spdx: string; file: string };
+  categories: string[];
+  capabilities: string[];
+  permissions: ExtensionPermission[];
+  projectActions?: ExtensionProjectAction[];
+};
+
+export type InstalledExtension = {
+  id: string;
+  type: string;
+  name: string;
+  version: string;
+  platform: string;
+  arch: string;
+  installDir: string;
+  executable: string;
+  installedAt: string;
+};
+
+export type ExtensionCatalogPackage = {
+  id: string;
+  type: string;
+  name: string;
+  summary: string;
+  publisher: string;
+  featured: boolean;
+  sourceVerified: boolean;
+  manifestUrl: string;
+  manifest: ExtensionManifest;
+  installed?: InstalledExtension;
+  updateAvailable: boolean;
+  platformAvailable: boolean;
+};
+
+export type ExtensionCatalogState = {
+  registryUrl: string;
+  source: string;
+  checkedAt: string;
+  warning?: string;
+  packages: ExtensionCatalogPackage[];
+};
+
+export type ExtensionOperationResult = {
+  catalog: ExtensionCatalogState;
+  state: WorkbenchState;
+};
+
+export type ExtensionActionResult = {
+  id: string;
+  output: string;
+  exitCode: number;
+  durationMs: number;
+};
+
 export type ToolDescriptor = {
   name: string;
   inputSchemaHash: string;
@@ -846,6 +925,9 @@ export type ChatTaskEvent = {
   type: "started" | "status" | "heartbeat" | "context_compression" | "delta" | "reasoning" | "provider_notice" | "usage" | "usage_state" | "tool" | "subagent" | "completed" | "failed" | "cancelled" | string;
   delta?: string;
   message?: string;
+  phase?: string;
+  elapsedMs?: number;
+  stageDurationMs?: number;
   model?: string;
   toolName?: string;
   toolCallId?: string;

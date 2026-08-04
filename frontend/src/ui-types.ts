@@ -33,6 +33,7 @@ export type SettingsCategory =
   | "config"
   | "profile"
   | "shortcuts"
+	| "extensions"
   | "mcp"
 	| "plugins"
   | "browser"

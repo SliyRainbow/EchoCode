@@ -304,6 +304,8 @@ export function settingsCategoryDescription(category: SettingsCategory) {
       return "配置审批策略和沙盒设置。";
     case "mcp":
       return "连接外部工具和数据源。";
+		case "extensions":
+			return "发现、安装和管理经过校验的 MCP、插件与 Skills。";
 		case "plugins":
 			return "管理 Office、Access 和第三方扩展工具。";
     case "browser":

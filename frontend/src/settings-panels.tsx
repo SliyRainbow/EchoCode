@@ -17,6 +17,9 @@ import type {
   AutomationState,
   AutomationTask,
   DeepSeekSessionState,
+	ExtensionActionResult,
+	ExtensionCatalogState,
+	ExtensionCatalogPackage,
   MCPServerSetting,
   ModelProviderSetting,
   OpenSourceLicense,
@@ -53,6 +56,7 @@ import {
 import { inferModelContextWindow, contextWindowSourceLabel } from "./model-context";
 import {
   browserClearData, checkForUpdates, deleteAutomationTask, deleteBrowserCredential, downloadUpdate, getAppInfo, getOpenSourceLicenses,
+	getExtensionCatalog, installExtension, refreshExtensionCatalog, revealExtension, runExtensionProjectAction, uninstallExtension,
   getAutomationState, getUpdateState, installUpdate, onAutomationState, onUpdateState, openAppRepositoryPage,
   openUpdateReleasePage, openURLInSystemBrowser, revealAppConfigFile, revealAppExecutable, runAutomationTaskNow, saveAutomationTask,
   saveBrowserCredential, setAutomationTaskEnabled, stopAutomationTask, openSkillFile, readSkillDetail, revealSkillFile,
@@ -67,6 +71,7 @@ const SkillCodeViewer = lazy(async () => {
 
 export type SettingsCenterProps = {
   activeCategory: SettingsCategory;
+	applyWorkbenchState: (state: WorkbenchState) => void;
   apiKeyDraft: string;
   cacheHealth: WorkbenchState["cacheHealth"];
   cacheHitRate: number;
@@ -231,6 +236,9 @@ export function SettingsCenter(props: SettingsCenterProps) {
           <Match when={props.activeCategory === "shortcuts"}>
             <ShortcutSettingsPanel />
           </Match>
+			<Match when={props.activeCategory === "extensions"}>
+				<ExtensionSettingsPanel applyWorkbenchState={props.applyWorkbenchState} confirmAction={props.confirmAction} />
+			</Match>
           <Match when={props.activeCategory === "mcp"}>
             <McpSettingsPanel
               confirmAction={props.confirmAction}
@@ -2451,6 +2459,7 @@ function skillDocumentSource(content: string): string {
 function builtinToolDescription(name: string): string {
   switch (name) {
     case "update_plan": return "维护 Agent 执行计划和步骤状态";
+    case "decode_protected_secret": return "本机解码用户明确提供的 Base64 凭据并保存为安全卡片";
     case "read_file": return "按行读取文本，返回编码、行尾和 sha256";
     case "file_info": return "读取文件或目录元数据，不加载完整内容";
     case "list_dir": return "按深度列出工作区目录树";
@@ -2496,6 +2505,375 @@ function mcpStatusTone(state?: string): "good" | "bad" | "watch" | "neutral" {
     case "idle": return "watch";
     default: return "neutral";
   }
+}
+
+type ExtensionCatalogTab = "featured" | "installed" | "mcp" | "plugin" | "skill";
+
+const extensionCatalogTabs: Array<{id: ExtensionCatalogTab; label: string}> = [
+	{id: "featured", label: "推荐"},
+	{id: "installed", label: "已安装"},
+	{id: "mcp", label: "MCP"},
+	{id: "plugin", label: "插件"},
+	{id: "skill", label: "Skills"},
+];
+
+function extensionTypeLabel(type: string) {
+	switch (type) {
+		case "mcp": return "MCP";
+		case "plugin": return "插件";
+		case "skill": return "Skill";
+		default: return type || "扩展";
+	}
+}
+
+function extensionTypeIcon(type: string) {
+	switch (type) {
+		case "mcp": return <Plug size={16} />;
+		case "plugin": return <Blocks size={16} />;
+		case "skill": return <Wrench size={16} />;
+		default: return <Download size={16} />;
+	}
+}
+
+function extensionPermissionLabel(id: string) {
+	const labels: Record<string, string> = {
+		"process.spawn": "启动本地进程",
+		"workspace.read": "读取已授权项目",
+		"workspace.write": "修改已授权项目",
+		"workspace.metadata.write": "写入项目索引元数据",
+		"network": "访问网络",
+	};
+	return labels[id] ?? id;
+}
+
+function extensionCatalogSourceLabel(source?: string) {
+	switch (source) {
+		case "network": return "在线目录";
+		case "cache": return "本地缓存";
+		case "preview": return "界面预览";
+		default: return "等待加载";
+	}
+}
+
+function extensionCheckedAt(value?: string) {
+	if (!value) return "尚未检查";
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) return "尚未检查";
+	return date.toLocaleString("zh-CN", {month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"});
+}
+
+export function ExtensionSettingsPanel(props: {
+	applyWorkbenchState: (state: WorkbenchState) => void;
+	confirmAction: (request: ConfirmationRequest) => Promise<boolean>;
+}) {
+	const [catalog, setCatalog] = createSignal<ExtensionCatalogState>();
+	const [activeTab, setActiveTab] = createSignal<ExtensionCatalogTab>("featured");
+	const [query, setQuery] = createSignal("");
+	const [selectedID, setSelectedID] = createSignal("");
+	const [loading, setLoading] = createSignal(false);
+	const [busy, setBusy] = createSignal("");
+	const [error, setError] = createSignal("");
+	const [lastAction, setLastAction] = createSignal<{
+		packageName: string;
+		label: string;
+		result: ExtensionActionResult;
+	}>();
+
+	const packages = createMemo(() => catalog()?.packages ?? []);
+	const filteredPackages = createMemo(() => {
+		const tab = activeTab();
+		const search = query().trim().toLocaleLowerCase();
+		return packages().filter((item) => {
+			const tabMatch = tab === "featured"
+				? item.featured
+				: tab === "installed"
+					? Boolean(item.installed)
+					: item.type === tab;
+			if (!tabMatch) return false;
+			if (!search) return true;
+			return [item.name, item.summary, item.publisher, item.manifest.description, ...item.manifest.capabilities]
+				.join(" ")
+				.toLocaleLowerCase()
+				.includes(search);
+		});
+	});
+	const selectedPackage = createMemo(() => packages().find((item) => item.id === selectedID()));
+	const tabCount = (tab: ExtensionCatalogTab) => packages().filter((item) => tab === "featured"
+		? item.featured
+		: tab === "installed"
+			? Boolean(item.installed)
+			: item.type === tab).length;
+
+	createEffect(() => {
+		const visible = filteredPackages();
+		if (!visible.some((item) => item.id === selectedID())) {
+			setSelectedID(visible[0]?.id ?? "");
+		}
+	});
+
+	const loadCatalog = async (refresh: boolean) => {
+		setLoading(true);
+		setError("");
+		try {
+			setCatalog(refresh ? await refreshExtensionCatalog() : await getExtensionCatalog());
+		} catch (cause) {
+			setError(cause instanceof Error ? cause.message : String(cause));
+		} finally {
+			setLoading(false);
+		}
+	};
+
+	onMount(() => void loadCatalog(false));
+
+	const install = async (item: ExtensionCatalogPackage) => {
+		const updating = Boolean(item.installed && item.updateAvailable);
+		const permissionDetail = item.manifest.permissions.length > 0
+			? item.manifest.permissions.map((permission) => `${permission.required ? "必需" : "可选"}：${extensionPermissionLabel(permission.id)} - ${permission.reason}`).join("\n")
+			: "此扩展未声明额外权限。";
+		const confirmed = await props.confirmAction({
+			title: updating ? `更新 ${item.name}？` : `安装 ${item.name}？`,
+			message: `${item.publisher} · ${item.manifest.version} · ${extensionTypeLabel(item.type)}`,
+			detail: permissionDetail,
+			confirmLabel: updating ? "更新" : "安装",
+			tone: "default",
+		});
+		if (!confirmed) return;
+		setBusy(`${item.id}:install`);
+		setError("");
+		try {
+			const result = await installExtension(item.id);
+			setCatalog(result.catalog);
+			props.applyWorkbenchState(result.state);
+		} catch (cause) {
+			setError(cause instanceof Error ? cause.message : String(cause));
+		} finally {
+			setBusy("");
+		}
+	};
+
+	const uninstall = async (item: ExtensionCatalogPackage) => {
+		const confirmed = await props.confirmAction({
+			title: `卸载 ${item.name}？`,
+			message: "扩展程序及其 EchoCode 配置将被移除。",
+			detail: "项目内由扩展生成的数据默认保留。例如 CodeGraph 的 .codegraph 索引不会被删除。",
+			confirmLabel: "卸载",
+			tone: "danger",
+		});
+		if (!confirmed) return;
+		setBusy(`${item.id}:uninstall`);
+		setError("");
+		try {
+			const result = await uninstallExtension(item.id);
+			setCatalog(result.catalog);
+			props.applyWorkbenchState(result.state);
+			setLastAction(undefined);
+		} catch (cause) {
+			setError(cause instanceof Error ? cause.message : String(cause));
+		} finally {
+			setBusy("");
+		}
+	};
+
+	const runProjectAction = async (item: ExtensionCatalogPackage, action: NonNullable<ExtensionCatalogPackage["manifest"]["projectActions"]>[number]) => {
+		if (action.requiresConfirmation) {
+			const confirmed = await props.confirmAction({
+				title: `${action.label}？`,
+				message: `将在当前项目中运行 ${item.name}。`,
+				detail: action.writes?.length ? `可能写入：${action.writes.join("、")}` : "该操作不会修改项目文件。",
+				confirmLabel: action.label,
+				tone: "default",
+			});
+			if (!confirmed) return;
+		}
+		setBusy(`${item.id}:action:${action.id}`);
+		setError("");
+		try {
+			const result = await runExtensionProjectAction(item.id, action.id);
+			setLastAction({packageName: item.name, label: action.label, result});
+		} catch (cause) {
+			setError(cause instanceof Error ? cause.message : String(cause));
+		} finally {
+			setBusy("");
+		}
+	};
+
+	return (
+		<div class="settings-page-body extension-center-page">
+			<div class="extension-toolbar">
+				<div class="extension-tabs" role="tablist" aria-label="扩展分类">
+					<For each={extensionCatalogTabs}>
+						{(tab) => (
+							<button
+								type="button"
+								role="tab"
+								aria-selected={activeTab() === tab.id}
+								classList={{active: activeTab() === tab.id}}
+								onClick={() => setActiveTab(tab.id)}
+							>
+								<span>{tab.label}</span>
+								<small>{tabCount(tab.id)}</small>
+							</button>
+						)}
+					</For>
+				</div>
+				<div class="extension-search-row">
+					<label class="extension-search">
+						<Search size={14} />
+						<input value={query()} placeholder="搜索扩展、能力或开发者" onInput={(event) => setQuery(event.currentTarget.value)} />
+						<Show when={query()}>
+							<button type="button" title="清除搜索" onClick={() => setQuery("")}><X size={13} /></button>
+						</Show>
+					</label>
+					<IconButton title="刷新扩展目录" disabled={loading()} onClick={() => void loadCatalog(true)}>
+						<RefreshCw size={14} classList={{spinning: loading()}} />
+					</IconButton>
+				</div>
+			</div>
+
+			<Show when={catalog()?.warning}>
+				<p class="extension-catalog-warning"><AlertTriangle size={14} />{catalog()?.warning}</p>
+			</Show>
+			<Show when={error()}>
+				<p class="settings-inline-error extension-error"><AlertTriangle size={14} />{error()}</p>
+			</Show>
+
+			<div class="extension-workspace">
+				<section class="extension-list-pane" aria-label="扩展列表">
+					<div class="extension-catalog-meta">
+						<span>{extensionCatalogSourceLabel(catalog()?.source)}</span>
+						<small>{extensionCheckedAt(catalog()?.checkedAt)}</small>
+					</div>
+					<div class="extension-list">
+						<For each={filteredPackages()} fallback={<p class="settings-empty-box">没有符合条件的扩展</p>}>
+							{(item) => (
+								<button
+									class="extension-list-option"
+									classList={{active: selectedID() === item.id}}
+									type="button"
+									onClick={() => setSelectedID(item.id)}
+								>
+									<span class={`extension-mark ${item.type}`}>{extensionTypeIcon(item.type)}</span>
+									<span class="extension-list-copy">
+										<span class="extension-list-title"><strong>{item.name}</strong><small>{item.manifest.version}</small></span>
+										<small>{item.publisher} · {extensionTypeLabel(item.type)}</small>
+										<span>{item.summary}</span>
+									</span>
+									<Show when={item.installed} fallback={<ChevronRight size={14} />}>
+										<span classList={{update: item.updateAvailable}} class="extension-install-state">{item.updateAvailable ? "可更新" : "已安装"}</span>
+									</Show>
+								</button>
+							)}
+						</For>
+					</div>
+				</section>
+
+				<section class="extension-detail-pane" aria-label="扩展详情">
+					<Show when={selectedPackage()} fallback={<p class="settings-empty-box">选择一个扩展查看详情</p>}>
+						{(item) => (
+							<div class="extension-detail">
+								<div class="extension-detail-head">
+									<span class={`extension-detail-mark ${item().type}`}>{extensionTypeIcon(item().type)}</span>
+									<div>
+										<div class="extension-title-row">
+											<h2>{item().name}</h2>
+											<span>{extensionTypeLabel(item().type)}</span>
+											<Show when={item().sourceVerified}><span class="verified"><ShieldCheck size={12} />来源已核验</span></Show>
+										</div>
+										<p>{item().manifest.description}</p>
+										<small>{item().publisher} · v{item().manifest.version} · {item().manifest.license.spdx}</small>
+									</div>
+								</div>
+
+								<div class="extension-primary-actions">
+									<Show when={!item().installed}>
+										<button class="settings-soft-button primary" type="button" disabled={!item().platformAvailable || Boolean(busy())} onClick={() => void install(item())}>
+											<Download size={14} />{busy() === `${item().id}:install` ? "安装中" : item().platformAvailable ? "安装" : "当前平台不可用"}
+										</button>
+									</Show>
+									<Show when={item().installed && item().updateAvailable}>
+										<button class="settings-soft-button primary" type="button" disabled={Boolean(busy())} onClick={() => void install(item())}>
+											<RefreshCw size={14} classList={{spinning: busy() === `${item().id}:install`}} />{busy() === `${item().id}:install` ? "更新中" : "更新"}
+										</button>
+									</Show>
+									<Show when={item().installed}>
+										<button class="settings-soft-button" type="button" disabled={Boolean(busy())} onClick={() => void revealExtension(item().id).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))}><FolderOpen size={14} />打开目录</button>
+										<button class="settings-danger-button" type="button" disabled={Boolean(busy())} onClick={() => void uninstall(item())}><Trash2 size={14} />{busy() === `${item().id}:uninstall` ? "卸载中" : "卸载"}</button>
+									</Show>
+								</div>
+
+								<div class="extension-facts">
+									<div><span>安装状态</span><strong>{item().installed ? `${item().installed?.platform}/${item().installed?.arch}` : "未安装"}</strong></div>
+									<div><span>发布通道</span><strong>{item().manifest.channel === "stable" ? "稳定版" : item().manifest.channel}</strong></div>
+									<div><span>更新校验</span><strong>SHA-256</strong></div>
+									<div><span>数据位置</span><strong>{item().installed ? "本机 LocalAppData" : "安装后创建"}</strong></div>
+								</div>
+
+								<div class="extension-detail-section">
+									<div class="extension-section-title"><strong>能力</strong><span>{item().manifest.capabilities.length} 项</span></div>
+									<div class="extension-capabilities">
+										<For each={item().manifest.capabilities} fallback={<span>清单未声明能力</span>}>
+											{(capability) => <span>{capability}</span>}
+										</For>
+									</div>
+								</div>
+
+								<div class="extension-detail-section">
+									<div class="extension-section-title"><strong>权限</strong><span>安装前确认</span></div>
+									<div class="extension-permissions">
+										<For each={item().manifest.permissions} fallback={<p class="settings-empty-box">不申请额外权限</p>}>
+											{(permission) => (
+												<div class="extension-permission-row">
+													<span classList={{optional: !permission.required}}>{permission.required ? <LockKeyhole size={14} /> : <ShieldCheck size={14} />}</span>
+													<div><strong>{extensionPermissionLabel(permission.id)}</strong><small>{permission.reason}</small></div>
+													<code>{permission.required ? "必需" : "按操作授权"}</code>
+												</div>
+											)}
+										</For>
+									</div>
+								</div>
+
+								<Show when={item().installed && (item().manifest.projectActions?.length ?? 0) > 0}>
+									<div class="extension-detail-section">
+										<div class="extension-section-title"><strong>当前项目</strong><span>手动执行</span></div>
+										<div class="extension-project-actions">
+											<For each={item().manifest.projectActions}>
+												{(action) => (
+													<button class="settings-soft-button" type="button" disabled={Boolean(busy())} onClick={() => void runProjectAction(item(), action)}>
+														<Show when={busy() === `${item().id}:action:${action.id}`} fallback={action.id === "index-status" ? <Search size={14} /> : action.id === "sync-index" ? <RefreshCw size={14} /> : <Play size={14} />}>
+															<RefreshCw size={14} class="spinning" />
+														</Show>
+														{action.label}
+													</button>
+												)}
+											</For>
+										</div>
+									</div>
+								</Show>
+
+								<div class="extension-detail-section extension-source-section">
+									<div class="extension-section-title"><strong>来源</strong><span>{item().manifest.source.thirdParty ? "第三方开源" : "EchoCode 官方"}</span></div>
+									<button type="button" onClick={() => void openURLInSystemBrowser(item().manifest.source.repository)}><GitBranch size={14} /><span><strong>源码仓库</strong><small>{item().manifest.source.repository}</small></span><ExternalLink size={13} /></button>
+									<button type="button" onClick={() => void openURLInSystemBrowser(item().manifest.source.release)}><Download size={14} /><span><strong>固定版本发布页</strong><small>{item().manifest.source.release}</small></span><ExternalLink size={13} /></button>
+								</div>
+
+								<Show when={lastAction() && lastAction()?.packageName === item().name}>
+									{(visible) => {
+										const action = () => lastAction()!;
+										return visible() ? (
+											<details class="extension-action-output">
+												<summary><CheckCircle2 size={14} /><span>{action().label}完成</span><small>退出码 {action().result.exitCode} · {action().result.durationMs} ms</small><ChevronDown size={14} /></summary>
+												<pre>{action().result.output || "操作已完成，没有输出。"}</pre>
+											</details>
+										) : null;
+									}}
+								</Show>
+							</div>
+						)}
+					</Show>
+				</section>
+			</div>
+		</div>
+	);
 }
 
 function pluginStatusLabel(state?: string) {
@@ -2764,6 +3142,52 @@ export function McpSettingsPanel(props: {
     updateServers([...props.runtimeDraft.mcp.servers, server]);
     setActiveServerID(server.id);
   };
+  const addCodeGraphServer = () => {
+	const codeGraphEnv = [
+	  { key: "CODEGRAPH_NO_DAEMON", value: "1" },
+	  { key: "CODEGRAPH_TELEMETRY", value: "0" },
+	];
+	const ensureCodeGraphEnv = (env: MCPServerSetting["env"]) => {
+	  const existingKeys = new Set(env.map((item) => item.key.trim().toUpperCase()));
+	  return [...env, ...codeGraphEnv.filter((item) => !existingKeys.has(item.key))];
+	};
+    const existing = props.runtimeDraft.mcp.servers.find((server) => {
+      const command = server.command.trim().toLowerCase();
+      return server.transport === "stdio" &&
+        (command === "codegraph" ||
+		  command.endsWith("\\codegraph.exe") || command.endsWith("\\codegraph.cmd") || command.endsWith("\\codegraph.bat") ||
+		  command.endsWith("/codegraph") || command.endsWith("/codegraph.exe") || command.endsWith("/codegraph.cmd") || command.endsWith("/codegraph.bat")) &&
+        server.args.map((arg) => arg.trim().toLowerCase()).join(" ") === "serve --mcp";
+    });
+    if (existing) {
+	  const env = ensureCodeGraphEnv(existing.env);
+	  if (env.length !== existing.env.length) updateServer(existing.id, { env });
+      setActiveServerID(existing.id);
+      return;
+    }
+    let index = 1;
+    let id = "codegraph";
+    while (props.runtimeDraft.mcp.servers.some((server) => server.id === id)) {
+      index += 1;
+      id = `codegraph-${index}`;
+    }
+    const server: MCPServerSetting = {
+      id,
+      name: "CodeGraph",
+      transport: "stdio",
+      command: "codegraph",
+      args: ["serve", "--mcp"],
+      env: codeGraphEnv,
+      passEnvironment: [],
+      workingDirectory: "",
+      url: "",
+      headers: [],
+      enabled: true,
+      toolResultPolicy: "summary-first",
+    };
+    updateServers([...props.runtimeDraft.mcp.servers, server]);
+    setActiveServerID(server.id);
+  };
   const removeServer = async (server: MCPServerSetting) => {
     if (server.transport === "builtin") return;
     const confirmed = await props.confirmAction({
@@ -2794,9 +3218,14 @@ export function McpSettingsPanel(props: {
         class="mcp-server-list-section"
         title="MCP 服务器"
         action={
-          <IconButton title="添加 MCP 服务器" onClick={addServer}>
-            <Plus size={15} />
-          </IconButton>
+          <div class="settings-row-actions">
+            <IconButton title="添加 CodeGraph 预设" onClick={addCodeGraphServer}>
+              <Database size={15} />
+            </IconButton>
+            <IconButton title="添加 MCP 服务器" onClick={addServer}>
+              <Plus size={15} />
+            </IconButton>
+          </div>
         }
       >
         <div class="mcp-server-list">

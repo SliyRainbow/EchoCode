@@ -33,6 +33,26 @@ func TestRegistryAddsStructuredSearchToolsInStableOrder(t *testing.T) {
 	}
 }
 
+func TestStableSearchPathHandlesResolvedWorkspaceAlias(t *testing.T) {
+	parent := t.TempDir()
+	realWorkspace := filepath.Join(parent, "real-workspace")
+	aliasWorkspace := filepath.Join(parent, "workspace-alias")
+	target := filepath.Join(realWorkspace, "src", "file.go")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("package demo\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realWorkspace, aliasWorkspace); err != nil {
+		t.Skipf("directory symlinks are unavailable: %v", err)
+	}
+
+	if got := stableSearchPath(SandboxPolicy{WorkspaceRoot: aliasWorkspace}, target); got != "src/file.go" {
+		t.Fatalf("stable path = %q, want %q", got, "src/file.go")
+	}
+}
+
 func TestGrepUsesRipgrepAndParsesUnicodeColumns(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "中文 工作区")
 	if err := os.MkdirAll(root, 0o755); err != nil {

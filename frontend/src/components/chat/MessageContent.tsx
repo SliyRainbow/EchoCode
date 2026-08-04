@@ -144,7 +144,7 @@ type ProviderRenderBlock = { kind: "provider"; part: ProviderNoticePart };
 type SecretRenderBlock = { kind: "secret"; group: SecretResultGroup };
 type TimelineRenderBlock = { kind: "timeline"; part: TimelineNotePart };
 type RenderBlock = TextRenderBlock | TimelineRenderBlock | ActivityRenderBlock | TeamRenderBlock | SubagentRenderBlock | ProviderRenderBlock | SecretRenderBlock;
-type ActivityCategory = "command" | "edit" | "read" | "directory" | "search" | "web" | "repository" | "image" | "render" | "visual" | "browser" | "computer" | "open" | "file" | "tool";
+type ActivityCategory = "command" | "edit" | "read" | "directory" | "search" | "web" | "repository" | "codegraph" | "image" | "render" | "visual" | "browser" | "computer" | "open" | "file" | "tool";
 type ActivityItem = { category: ActivityCategory; parts: MessagePart[] };
 type ActivityBatch = { kind: "research" | "activity"; items: ActivityItem[] };
 type DisclosureProps = {
@@ -365,6 +365,7 @@ function ActivityIcon(props: { category: ActivityCategory }) {
       <Match when={props.category === "directory" || props.category === "file"}><FolderOpen size={14} /></Match>
       <Match when={props.category === "search" || props.category === "web"}><Search size={14} /></Match>
       <Match when={props.category === "repository"}><GitBranch size={14} /></Match>
+      <Match when={props.category === "codegraph"}><Route size={14} /></Match>
       <Match when={props.category === "image"}><ImageIcon size={14} /></Match>
       <Match when={props.category === "render"}><ImageIcon size={14} /></Match>
       <Match when={props.category === "visual"}><Eye size={14} /></Match>
@@ -828,8 +829,9 @@ function activityCategory(part: Exclude<MessagePart, TextPart>): ActivityCategor
   if (part.kind === "task_progress") return "tool";
   if (part.kind === "team_role") return "tool";
   if (part.kind === "subagent") return "tool";
-  if (part.kind === "provider_notice") return "tool";
+	if (part.kind === "provider_notice") return "tool";
 	if (part.kind === "secret_result") return "tool";
+  if (part.name.toLowerCase().includes("__codegraph_")) return "codegraph";
   switch (part.name) {
     case "run_command":
     case "terminal":
@@ -899,6 +901,9 @@ function TimelineNote(props: { part: TimelineNotePart }) {
 		</Show>
 	  </span>
 	  <span>{props.part.message}</span>
+	  <Show when={props.part.durationMs !== undefined}>
+		<small>{formatElapsedDuration(props.part.durationMs)}</small>
+	  </Show>
 	</div>
   );
 }
@@ -1214,7 +1219,7 @@ function teamCurrentStatus(part: TeamPart | undefined, completed: number, total:
 }
 
 function aggregateActivity(category: ActivityCategory): boolean {
-  return category === "command" || category === "edit" || category === "read" || category === "image" || category === "search" || category === "repository";
+  return category === "command" || category === "edit" || category === "read" || category === "image" || category === "search" || category === "repository" || category === "codegraph";
 }
 
 function activityStatus(item: ActivityItem): "running" | "ok" | "error" {
@@ -1249,6 +1254,10 @@ function activityLabel(item: ActivityItem): string {
 	  return running
 		? (tools.length > 1 ? `正在读取 ${tools.length} 个仓库` : input ? `正在读取仓库 ${compactLabel(input)}` : "正在读取代码仓库")
 		: tools.length > 1 ? `读取了 ${tools.length} 个仓库` : input ? `读取了仓库 ${compactLabel(input)}` : "读取了代码仓库";
+    case "codegraph":
+	  return running
+		? (tools.length > 1 ? `正在分析 ${tools.length} 项代码关系` : "正在分析代码关系")
+		: tools.length > 1 ? `分析了 ${tools.length} 项代码关系` : "分析了代码关系";
     case "image": {
       const count = Math.max(1, files.filter(isImagePath).length);
       return `查看了 ${count} 张图像`;
@@ -1542,6 +1551,8 @@ function activityArtifacts(parts: MessagePart[]): FilePart[] {
 function friendlyToolName(name = "工具"): string {
   if (name === "render_artifact") return "渲染预览";
   if (name === "inspect_visual") return "视觉检查";
+  if (name === "decode_protected_secret") return "安全卡片解码";
+  if (name.toLowerCase().includes("__codegraph_")) return "代码关系分析";
   return name.replaceAll("_", " ");
 }
 

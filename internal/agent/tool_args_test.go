@@ -86,3 +86,18 @@ func TestToolInputForDisplaySupportsWebTools(t *testing.T) {
 		t.Fatalf("string-encoded browser input = %q", got)
 	}
 }
+
+func TestToolInputForDisplaySupportsCodeGraphTools(t *testing.T) {
+	if got := toolInputForDisplay("mcp__codegraph__codegraph_explore", json.RawMessage(`{"query":"session runtime cancellation"}`)); got != "session runtime cancellation" {
+		t.Fatalf("codegraph_explore input = %q", got)
+	}
+	if got := toolInputForDisplay("mcp__codegraph__codegraph_impact", json.RawMessage(`{"symbol":"NewProjectSessionRuntime"}`)); got != "NewProjectSessionRuntime" {
+		t.Fatalf("codegraph_impact input = %q", got)
+	}
+	if got := toolInputForDisplay("mcp__codegraph__codegraph_node", json.RawMessage(`{"file":"internal/agent/session_runtime.go"}`)); got != "internal/agent/session_runtime.go" {
+		t.Fatalf("codegraph_node input = %q", got)
+	}
+	if got := toolInputForDisplay("mcp__codegraph__codegraph_status", json.RawMessage(`{}`)); got != "检查代码索引状态" {
+		t.Fatalf("codegraph_status input = %q", got)
+	}
+}
