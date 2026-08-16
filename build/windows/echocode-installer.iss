@@ -1,9 +1,9 @@
 ; EchoCode Inno Setup installer script.
 ; Compile with: ISCC.exe echocode-installer.iss
-; Output: build\bin\EchoCode-setup-0.3.19.exe
+; Output: build\bin\EchoCode-setup-0.3.20.exe
 
 #define MyAppName "EchoCode"
-#define MyAppVersion "0.3.19"
+#define MyAppVersion "0.3.20"
 #define MyAppPublisher "EYPA/AI"
 #define MyAppURL "https://github.com/SliyRainbow/EchoCode"
 #define MyAppExeName "EchoCode.exe"
