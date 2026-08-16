@@ -17,6 +17,23 @@ describe("chat UI regressions", () => {
     expect(messageContent).toContain('return "代码关系分析"');
   });
 
+  test("renders the model reasoning trace as a collapsible block", async () => {
+    const [app, messageContent, chatCss] = await Promise.all([
+      Bun.file(new URL("../src/app.tsx", import.meta.url)).text(),
+      Bun.file(new URL("../src/components/chat/MessageContent.tsx", import.meta.url)).text(),
+      Bun.file(new URL("../src/styles/chat.css", import.meta.url)).text(),
+    ]);
+    expect(app).toContain('reasoning={message.reasoning}');
+    expect(app).toContain('reasoningActive={message.streaming && message.status === "正在推理"}');
+    expect(messageContent).toContain("function ReasoningBlock");
+    expect(messageContent).toContain('<Show when={(props.reasoning ?? "").trim()}');
+    expect(messageContent).toContain('props.active ? "正在思考…" : "思考过程"');
+    expect(messageContent).toContain("setUserToggled(true)");
+    expect(chatCss).toContain(".op-reasoning {");
+    expect(chatCss).toContain(".op-reasoning-body {");
+    expect(chatCss).toContain("white-space: pre-wrap");
+  });
+
   test("uses a theme-aware frameless title bar with complete window controls", async () => {
     const [main, app, titlebar, workbench, css] = await Promise.all([
       Bun.file(new URL("../../main.go", import.meta.url)).text(),

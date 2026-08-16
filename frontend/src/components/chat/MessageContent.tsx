@@ -1,11 +1,12 @@
-import { For, Match, Switch, Show, createMemo, createSignal, onCleanup } from "solid-js";
+import { For, Match, Switch, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import {
   AlertCircle,
 	Bot,
-  Check,
+	Brain,
+	Check,
 	Copy,
-  ChevronDown,
-  ChevronRight,
+	ChevronDown,
+	ChevronRight,
   Circle,
   Eye,
 	EyeOff,
@@ -44,6 +45,8 @@ import { InlineDiffPreview } from "./InlineDiffPreview";
 // 操作流渲染：按片段类型分派。工具/diff 卡片默认折叠，用户按需展开（对标 ZCode/Codex）。
 export function MessageContent(props: {
   parts: MessagePart[];
+  reasoning?: string;
+  reasoningActive?: boolean;
   inferFileArtifacts?: boolean;
   hideTeamRun?: boolean;
   hideFileChangesSummary?: boolean;
@@ -65,6 +68,9 @@ export function MessageContent(props: {
   const fileChanges = createMemo(() => editedFileSummaries(renderedParts()));
   return (
     <div class="op-stream">
+      <Show when={(props.reasoning ?? "").trim()}>
+        <ReasoningBlock reasoning={props.reasoning ?? ""} active={props.reasoningActive} />
+      </Show>
       <For each={blocks()}>
         {(block) => (
           <Switch>
@@ -887,6 +893,41 @@ function partDisclosureIdentity(part: MessagePart | undefined): string {
 		case "text":
 			return "text";
 	}
+}
+
+// 思维链区块：流式推理时自动展开并显示"正在思考"，正文开始后自动折叠，
+// 用户手动展开/收起后不再被流式状态覆盖。
+function ReasoningBlock(props: { reasoning: string; active?: boolean }) {
+  const [open, setOpen] = createSignal(Boolean(props.active));
+  const [userToggled, setUserToggled] = createSignal(false);
+  createEffect(() => {
+    if (userToggled()) return;
+    setOpen(Boolean(props.active));
+  });
+  return (
+    <details
+      class="op-reasoning"
+      classList={{ active: Boolean(props.active) }}
+      open={open()}
+      onToggle={(event) => {
+        const next = event.currentTarget.open;
+        if (next !== open()) {
+          setUserToggled(true);
+          setOpen(next);
+        }
+      }}
+    >
+      <summary title="模型的推理过程">
+        <span class="op-reasoning-icon" aria-hidden="true"><Brain size={14} /></span>
+        <span class="op-reasoning-label">{props.active ? "正在思考…" : "思考过程"}</span>
+        <Show when={props.active}>
+          <span class="op-activity-spinner" aria-label="推理中" />
+        </Show>
+        <ChevronRight class="op-activity-chevron" size={14} aria-hidden="true" />
+      </summary>
+      <div class="op-reasoning-body">{props.reasoning}</div>
+    </details>
+  );
 }
 
 function TimelineNote(props: { part: TimelineNotePart }) {

@@ -4454,6 +4454,8 @@ function App() {
 				  <article class="op-msg assistant" classList={{ system: message.role === "system", failed: message.failed, interrupted: message.interrupted }}>
                     <MessageContent
                       parts={displayMessageParts(message.parts, message.content, message.streaming)}
+                      reasoning={message.reasoning}
+                      reasoningActive={message.streaming && message.status === "正在推理"}
                       hideTeamRun={message.streaming && activeSessionTask()?.messageID === message.id}
                       hideFileChangesSummary={message.streaming}
                       undoingChanges={rewinding()}
