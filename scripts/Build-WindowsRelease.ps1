@@ -54,7 +54,11 @@ try {
     $setupName = "EchoCode-setup-$Version.exe"
     $setup = Join-Path $releaseDir $setupName
     if (!(Test-Path -LiteralPath $setup -PathType Leaf)) { throw 'Expected installer was not produced.' }
-    if ((Get-Item -LiteralPath $setup).VersionInfo.FileVersion -ne "$Version.0") { throw 'Installer version mismatch.' }
+    $setupVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($setup)
+    $setupFixedVersion = "$($setupVersion.FileMajorPart).$($setupVersion.FileMinorPart).$($setupVersion.FileBuildPart).$($setupVersion.FilePrivatePart)"
+    if ($setupFixedVersion -ne "$Version.0" -or $setupVersion.ProductVersion -ne $Version) {
+        throw "Installer version mismatch: fixed=$setupFixedVersion; text=$($setupVersion.FileVersion); product=$($setupVersion.ProductVersion)."
+    }
     $zipName = "EchoCode-$Version-windows-amd64-portable.zip"
     $zipPath = Join-Path $releaseDir $zipName
     Add-Type -AssemblyName System.IO.Compression.FileSystem
