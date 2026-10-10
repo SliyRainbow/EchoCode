@@ -56,7 +56,8 @@ try {
     if (!(Test-Path -LiteralPath $setup -PathType Leaf)) { throw 'Expected installer was not produced.' }
     $setupVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($setup)
     $setupFixedVersion = "$($setupVersion.FileMajorPart).$($setupVersion.FileMinorPart).$($setupVersion.FileBuildPart).$($setupVersion.FilePrivatePart)"
-    if ($setupFixedVersion -ne "$Version.0" -or $setupVersion.ProductVersion -ne $Version) {
+    # Inno Setup pads textual version resources with spaces; compare their values.
+    if ($setupFixedVersion -ne "$Version.0" -or $setupVersion.ProductVersion.Trim() -ne $Version) {
         throw "Installer version mismatch: fixed=$setupFixedVersion; text=$($setupVersion.FileVersion); product=$($setupVersion.ProductVersion)."
     }
     $zipName = "EchoCode-$Version-windows-amd64-portable.zip"
