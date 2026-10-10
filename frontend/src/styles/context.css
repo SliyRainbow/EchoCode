@@ -1,0 +1,21 @@
+.header-actions .context-trigger { display: inline-flex; align-items: center; gap: 5px; width: auto; min-width: 48px; padding: 5px 7px; font-size: 11px; font-variant-numeric: tabular-nums; }
+.context-trigger[data-warning] { color: var(--text-primary); }
+.context-popover { z-index: 200; box-sizing: border-box; width: min(340px, calc(100vw - 24px)); padding: 18px; color: var(--text-primary); background: var(--bg-sidebar); border: 1px solid var(--border-color); border-radius: 10px; box-shadow: 0 12px 36px #0003; font-size: 12px; animation: ec-content-in var(--motion-normal) ease-out; }
+.context-popover h2 { margin: 0 0 15px; font-size: 13px; font-weight: 600; }
+.context-estimate { margin: 0 0 10px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.context-estimate strong { color: var(--text-primary); font-size: 19px; font-weight: 500; }
+.context-meter { height: 4px; overflow: hidden; background: var(--bg-hover); border-radius: 4px; }
+.context-meter > span { display: block; height: 100%; border-radius: inherit; background: var(--text-secondary); transition: width var(--motion-normal) ease; }
+.context-popover [id$="-description"], .context-help { margin: 12px 0; color: var(--text-secondary); line-height: 1.65; font-size: 11px; }
+.context-popover dl { display: grid; gap: 10px; margin: 18px 0; }
+.context-popover dl > div { display: flex; gap: 16px; justify-content: space-between; }
+.context-popover dt { color: var(--text-secondary); }
+.context-popover dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.context-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 16px; }
+.context-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 6px 10px; color: var(--text-primary); background: var(--bg-hover); border: 1px solid var(--border-color); border-radius: 6px; font: inherit; cursor: pointer; }
+.context-actions button:hover:not(:disabled) { background: var(--settings-field-hover); }
+.context-actions button:disabled { opacity: .45; cursor: not-allowed; }
+.context-actions button:focus-visible { outline: 2px solid var(--text-secondary); outline-offset: 2px; }
+.context-result { line-height: 1.65; }
+.context-result.error { color: var(--error, #d46a6a); }
+.app-titlebar-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -38,22 +38,40 @@ export function reconcileSessionMessages(
     return preserveCurrentOnEmpty ? current : [];
   }
 
-  return history.map((message, index) => ({
-    id: message.id || `history-${index}-${fallbackTimestamp}`,
-    eventId: message.id || undefined,
-    role: normalizeHistoryRole(message.role),
-    content: message.content,
-    model: message.model,
-    parts: message.parts,
-    attachments: message.attachments,
-    createdAt: message.createdAt || new Date(fallbackTimestamp).toISOString(),
-    durationMs: message.durationMs,
-	failed: message.status === "failed",
-	cancelled: message.status === "cancelled",
-	interrupted: message.status === "interrupted",
-	status: message.status === "interrupted" ? "上次运行中断" : undefined,
-	statusKind: message.status === "interrupted" ? "failed" : undefined,
-  }));
+  const byEventID = new Map(current.map(message => [message.eventId || message.id, message]));
+  const reconciled = history.map((message, index): ChatMessage => {
+    const candidate = current[index];
+    // Only adopt an optimistic identity at the same position in an unchanged
+    // conversation. Branch changes never inherit another answer's UI state.
+    const optimistic = preserveCurrentOnEmpty && candidate && !candidate.eventId
+      && candidate.role === message.role && candidate.content === message.content
+      && Boolean(message.content.trim()) ? candidate : undefined;
+    const previous = byEventID.get(message.id) ?? optimistic;
+    return {
+      id: previous?.id || message.id || `history-${index}-${fallbackTimestamp}`,
+      eventId: message.id || undefined,
+      role: normalizeHistoryRole(message.role),
+      content: message.content,
+      reasoning: message.reasoning ?? previous?.reasoning,
+      model: message.model,
+      parts: message.parts,
+      attachments: message.attachments,
+      createdAt: message.createdAt || new Date(fallbackTimestamp).toISOString(),
+      durationMs: message.durationMs,
+      failed: message.status === "failed",
+      cancelled: message.status === "cancelled",
+      interrupted: message.status === "interrupted",
+      status: message.status === "interrupted" ? "上次运行中断" : undefined,
+      statusKind: message.status === "interrupted" ? "failed" : undefined,
+    };
+  });
+  if (preserveCurrentOnEmpty) {
+    // A failed disk write is not evidence that the visible answer was deleted.
+    // Keep it through refresh/session switching until durable history catches up.
+    const restoredIDs = new Set(reconciled.map(message => message.id));
+    reconciled.push(...current.filter(message => message.historyError && !restoredIDs.has(message.id)));
+  }
+  return reconciled;
 }
 
 function normalizeHistoryRole(role: string): ChatMessage["role"] {

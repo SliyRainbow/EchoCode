@@ -85,6 +85,11 @@ func (s *Service) recordLiveUsage(usage *protocol.TokenUsage, route chatRoute, s
 	s.metrics = metrics
 	s.recordUsageMetrics(metrics, route)
 	snapshot := s.liveUsageState()
+	if usage != nil && usage.PromptTokens > 0 {
+		profile, _ := ReasoningProfileFor(s.reasoning)
+		setContextTelemetry(&snapshot.DeepSeekSession, contextBudgetForRoutePolicy(route, profile.Budget.ContextPolicy), int(usage.PromptTokens))
+		snapshot.DeepSeekSession.ContextUsageSource = "provider"
+	}
 	emitChatEvent(sink, ChatStreamEvent{Type: "usage_state", Usage: usage, UsageState: &snapshot})
 	return metrics
 }

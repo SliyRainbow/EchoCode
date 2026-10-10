@@ -131,17 +131,28 @@ func tokenIntegrityRID(token windows.Token) uint32 {
 		return 0
 	}
 	label := (*windows.Tokenmandatorylabel)(unsafe.Pointer(&buffer[0]))
-	if label.Label.Sid == nil || label.Label.Sid.SubAuthorityCount() == 0 {
+	if label.Label.Sid == nil {
 		return 0
 	}
-	return label.Label.Sid.SubAuthority(uint32(label.Label.Sid.SubAuthorityCount() - 1))
+	// SubAuthorityCount uses a syscall-returned interior pointer that triggers
+	// checkptr in x/sys v0.46. Parse the Windows SID string to keep -race's
+	// pointer checks enabled while validating the same integrity RID.
+	parts := strings.Split(label.Label.Sid.String(), "-")
+	if len(parts) == 0 {
+		return 0
+	}
+	rid, err := strconv.ParseUint(parts[len(parts)-1], 10, 32)
+	if err != nil {
+		return 0
+	}
+	return uint32(rid)
 }
 
 func TestWindowsJobObjectTerminatesDescendantProcess(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "child.pid")
 	quotedPIDFile := strings.ReplaceAll(pidFile, "'", "''")
 	script := fmt.Sprintf(
-		"$child = Start-Process powershell.exe -ArgumentList '-NoLogo','-NoProfile','-Command','Start-Sleep -Seconds 30' -PassThru; [IO.File]::WriteAllText('%s', [string]$child.Id); Wait-Process -Id $child.Id",
+		"$child = Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoLogo','-NoProfile','-Command','Start-Sleep -Seconds 30' -PassThru; [IO.File]::WriteAllText('%s', [string]$child.Id); Wait-Process -Id $child.Id",
 		quotedPIDFile,
 	)
 	cmd := exec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-Command", script)

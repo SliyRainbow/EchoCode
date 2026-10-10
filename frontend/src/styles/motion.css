@@ -1,0 +1,46 @@
+:root {
+  --motion-fast: 120ms;
+  --motion-normal: 180ms;
+  --motion-panel: 220ms;
+  --motion-ease: cubic-bezier(.2, .8, .2, 1);
+}
+
+/* Surfaces animate once on entry, never again for each streamed text update. */
+.settings-screen { animation: ec-fade-in var(--motion-normal) ease-out; }
+.settings-content > .settings-page-body,
+.welcome-state { animation: ec-content-in var(--motion-normal) var(--motion-ease); }
+.ui-menu, .settings-select-popover, .ui-tooltip { transform-origin: var(--kb-menu-content-transform-origin, top center); }
+.ui-menu[data-expanded], .settings-select-popover[data-expanded], .ui-tooltip[data-expanded] { animation: ec-content-in var(--motion-fast) var(--motion-ease); }
+.ui-menu[data-closed], .settings-select-popover[data-closed], .ui-tooltip[data-closed] { animation: ec-fade-out var(--motion-fast) ease-in; }
+.ui-modal-backdrop { animation: ec-fade-in var(--motion-normal) ease-out; }
+.ui-modal-positioner > :is(.session-search-dialog, .app-confirm-dialog, .approval-card, .image-viewer-dialog),
+.timeline-panel, .workspace-tools-panel { animation: ec-content-in var(--motion-panel) var(--motion-ease); }
+/* Native browser surfaces follow the host's bounds, so keep its geometry fixed. */
+.side-panel-host { animation: ec-fade-in var(--motion-panel) ease-out; }
+
+.mh-shell { transition: grid-template-columns var(--motion-panel) var(--motion-ease); }
+.settings-center:not(.is-workspace-page) { transition: grid-template-columns var(--motion-panel) var(--motion-ease); }
+.settings-nav { transition: opacity var(--motion-normal) ease, visibility 0s; }
+.mh-sidebar { min-width: 0; overflow: hidden; transition: opacity var(--motion-normal) ease, visibility 0s; }
+.mh-shell.sidebar-collapsed > .mh-sidebar { display: flex; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity var(--motion-fast) ease, visibility 0s var(--motion-panel); }
+.mh-shell.resizing, .mh-shell.resizing-browser { transition: none; }
+.mh-shell.resizing *, .mh-shell.resizing-browser * { transition: none !important; }
+
+:is(.ui-icon-button, .settings-button, .settings-nav button, .quick-menu button, .session-search-result, .composer-mode, .welcome-suggestions button) {
+  transition: color var(--motion-fast) ease, background-color var(--motion-fast) ease, border-color var(--motion-fast) ease, opacity var(--motion-fast) ease;
+}
+.op-reasoning-content { overflow: hidden; }
+.op-reasoning-content[data-expanded] { animation: ec-disclosure-open var(--motion-panel) var(--motion-ease); }
+.op-reasoning-content[data-closed] { animation: ec-disclosure-close var(--motion-normal) var(--motion-ease); }
+.op-reasoning-chevron { transition: transform var(--motion-normal) var(--motion-ease); }
+.op-reasoning-trigger[data-expanded] .op-reasoning-chevron { transform: rotate(180deg); }
+
+@keyframes ec-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ec-fade-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes ec-content-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes ec-disclosure-open { from { height: 0; opacity: 0; } to { height: var(--kb-collapsible-content-height); opacity: 1; } }
+@keyframes ec-disclosure-close { from { height: var(--kb-collapsible-content-height); opacity: 1; } to { height: 0; opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

@@ -1,3 +1,5 @@
+import { PanelTab } from "./ui/PanelTab";
+import { Tabs } from "@kobalte/core/tabs";
 import {
   ArrowLeft,
   ArrowRight,
@@ -526,19 +528,19 @@ function ManagedBrowser(props: {
   };
 
   return (
-		<aside
+		<Tabs as="aside" value={state().activeTabId} onChange={(value) => { if (value && value !== state().activeTabId) void activate(value); }}
 			class="browser-preview browser-managed"
 			classList={{ "browser-surface-suspended": surfaceSuspended() }}
 			aria-label="EchoCode 内置浏览器"
 		>
-      <div class="browser-tabs" role="tablist" aria-label="浏览器标签页">
+      <Tabs.List class="browser-tabs panel-tabs" aria-label="浏览器标签页">
         <For each={state().tabs}>
           {(tab) => (
             <div class="browser-tab" classList={{ active: tab.id === state().activeTabId }}>
-              <button type="button" role="tab" aria-selected={tab.id === state().activeTabId} title={tab.title || tab.url} onClick={() => void activate(tab.id)}>
+              <PanelTab value={tab.id} title={tab.title || tab.url}>
                 <Show when={!tab.loading} fallback={<LoaderCircle class="spinning" size={12} />}><Globe2 size={12} /></Show>
                 <span>{tab.title || "新标签页"}</span>
-              </button>
+              </PanelTab>
               <button
                 class="browser-tab-close"
                 type="button"
@@ -573,7 +575,7 @@ function ManagedBrowser(props: {
           }}
           onClick={closePanel}
         ><X size={15} /></button>
-      </div>
+      </Tabs.List>
 
       <div class="browser-toolbar">
         <button type="button" title="后退" aria-label="后退" disabled={!activeTab()?.canGoBack || Boolean(busy())} onClick={() => void run("back", () => browserBack(activeTabID()))}><ArrowLeft size={15} /></button>
@@ -594,7 +596,7 @@ function ManagedBrowser(props: {
         <button type="button" title="下载" aria-label="下载" classList={{ active: inspectorOpen() && inspectorTab() === "downloads" }} onClick={() => void openInspector("downloads")}><Download size={15} /></button>
       </div>
 
-      <div class="browser-surface-layout" classList={{ "inspector-open": inspectorOpen() }}>
+      <Tabs.Content value={state().activeTabId} forceMount class="browser-surface-layout" classList={{ "inspector-open": inspectorOpen() }}>
         <div class="browser-remote-frame" classList={{ native: nativeMode() }} ref={frameHost} onClick={(event) => { if (!nativeMode()) pointerClick(event); }} onWheel={(event) => { if (!nativeMode()) wheel(event); }}>
           <Show
             when={nativeMode()}
@@ -668,15 +670,15 @@ function ManagedBrowser(props: {
         </div>
 
         <Show when={inspectorOpen()}>
-          <section class="browser-inspector" aria-label="浏览器检查器">
-            <div class="browser-inspector-tabs">
-              <button classList={{ active: inspectorTab() === "dom" }} title="DOM" aria-label="DOM" onClick={() => void openInspector("dom")}><ListTree size={14} />DOM</button>
-              <button classList={{ active: inspectorTab() === "console" }} title="控制台" onClick={() => void openInspector("console")}><TerminalSquare size={14} />控制台</button>
-              <button classList={{ active: inspectorTab() === "network" }} title="网络" onClick={() => void openInspector("network")}><Network size={14} />网络</button>
-              <button classList={{ active: inspectorTab() === "downloads" }} title="下载" onClick={() => setInspectorTab("downloads")}><Download size={14} />下载</button>
+          <Tabs as="section" class="browser-inspector" aria-label="浏览器检查器" value={inspectorTab()} onChange={(value) => void openInspector(value as InspectorTab)}>
+            <Tabs.List class="browser-inspector-tabs panel-tabs" aria-label="检查器视图">
+              <PanelTab value="dom"><ListTree size={14} />DOM</PanelTab>
+              <PanelTab value="console"><TerminalSquare size={14} />控制台</PanelTab>
+              <PanelTab value="network"><Network size={14} />网络</PanelTab>
+              <PanelTab value="downloads"><Download size={14} />下载</PanelTab>
               <button class="browser-inspector-close" title="关闭检查器" aria-label="关闭检查器" onClick={() => setInspectorOpen(false)}><X size={14} /></button>
-            </div>
-            <div class="browser-inspector-body">
+            </Tabs.List>
+            <Tabs.Content value={inspectorTab()} class="browser-inspector-body">
               <Show when={inspectorTab() === "dom"}>
                 <div class="browser-dom-summary"><strong>{inspector()?.snapshot.title}</strong><span>{inspector()?.snapshot.url}</span><p>{inspector()?.snapshot.text}</p></div>
                 <div class="browser-element-list">
@@ -706,10 +708,10 @@ function ManagedBrowser(props: {
                   {(item) => <div class="browser-download-row"><FileText size={15} /><div><strong>{item.filename || "下载"}</strong><span>{downloadStatus(item.state, item.receivedBytes, item.totalBytes)}</span></div><button disabled={!item.path} title="打开" onClick={() => void run("open-download", () => browserOpenDownload(item.id))}><ExternalLink size={14} /></button><button disabled={!item.path} title="在文件夹中显示" onClick={() => void run("reveal-download", () => browserRevealDownload(item.id))}><FolderOpen size={14} /></button></div>}
                 </For>
               </Show>
-            </div>
-          </section>
+            </Tabs.Content>
+          </Tabs>
         </Show>
-      </div>
+      </Tabs.Content>
 
       <Show when={error() || activeTab()?.error || status()}>
         <div class="browser-preview-error" classList={{ status: !error() && !activeTab()?.error }} role="status">
@@ -717,7 +719,7 @@ function ManagedBrowser(props: {
           <button title="关闭提示" aria-label="关闭提示" onClick={dismissNotice}><X size={13} /></button>
         </div>
       </Show>
-    </aside>
+    </Tabs>
   );
 }
 

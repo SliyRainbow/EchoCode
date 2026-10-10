@@ -1,206 +1,64 @@
-import {
-  AlertTriangle,
-  Archive,
-  ArrowDown,
-  ArrowLeft,
-  ArrowRight,
-  ArrowUp,
-  BarChart3,
-  Bot,
-  Braces,
-  Check,
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  ClipboardList,
-  Clock3,
-  Command,
-  Copy,
-  Cpu,
-  Database,
-  FileText,
-  Folder,
-  FolderOpen,
-  Gauge,
-  GitBranch,
-  GitFork,
-  Globe2,
-  HardDrive,
-  History,
-  ImagePlus,
-  Keyboard,
-  KeyRound,
-  LayoutList,
-  ListPlus,
-  ListFilter,
-  ListCollapse,
-  LockKeyhole,
-  MessageSquarePlus,
-  Monitor,
-  Moon,
-  Network,
-  Palette,
-  Pencil,
-  Pin,
-  Plug,
-  Plus,
-  RefreshCw,
-  Save,
-  Search,
-  Settings,
-  ShieldCheck,
-  SlidersHorizontal,
-  Sparkles,
-  Square,
-  Sun,
-  Terminal,
-  Trash2,
-  User,
-  Users,
-  Wrench,
-  X,
-  Zap,
-  ExternalLink,
-  Ellipsis,
-  Undo2,
-  Redo2,
-} from "lucide-solid";
-import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { AlertTriangle, Archive, ArrowDown, ArrowRight, ArrowUp, Bot, Braces, Check, CheckCircle2, ChevronRight, Clock3, Copy, Ellipsis, ExternalLink, FileText, Folder, FolderOpen, GitBranch, GitFork, Globe2, History, ListCollapse, ListPlus, MessageSquarePlus, Monitor, Pencil, Pin, Plus, RefreshCw, Search, ShieldCheck, Square, Terminal, Trash2, X } from "lucide-solid";
 import type { JSX } from "solid-js";
+import { createEffect, createMemo, createSignal, For, lazy, Match, onCleanup, onMount, Show, Suspense, Switch } from "solid-js";
 import { Portal } from "solid-js/web";
-import { AppTitleBar } from "./components/AppTitleBar";
-import { ReasoningMenu } from "./components/ReasoningMenu";
-import { SidePanelHost } from "./components/SidePanelHost";
-import type { SidePanelView } from "./components/SidePanelHost";
-import { MessageContent, SubagentDock, TaskProgress, TeamRun, textToParts } from "./components/chat/MessageContent";
-import type { SubagentPart, TaskProgressPart, TeamPart } from "./components/chat/MessageContent";
-import { TimelinePanel } from "./components/TimelinePanel";
 import { ApprovalModal } from "./components/ApprovalModal";
-import { ConfirmDialog } from "./components/ConfirmDialog";
+import { AppTitleBar } from "./components/AppTitleBar";
+import { SidebarResizer, type SidebarResizeControl } from "./components/SidebarResizer";
+import { ContextUsage } from "./components/ContextUsage";
+import { CacheUsage } from "./components/CacheUsage";
+import { permissionMode, permissionLabel, withPermissionPreset, type PermissionPreset } from "./lib/permission-presets";
+import { compressSessionContext } from "./services/workbench";
+import type { SubagentPart, TaskProgressPart, TeamPart } from "./components/chat/MessageContent";
+import { MessageContent, SubagentDock, TaskProgress, TeamRun, textToParts } from "./components/chat/MessageContent";
+import { ComposerActions } from "./components/ComposerActions";
 import type { ConfirmationRequest, ConfirmationResult } from "./components/ConfirmDialog";
+import { ConfirmDialog } from "./components/ConfirmDialog";
 import { ImagePreviewModal } from "./components/ImagePreviewModal";
+import { ModelRouteMenu } from "./components/ModelRouteMenu";
+import { ReasoningMenu } from "./components/ReasoningMenu";
+import { SessionSearch } from "./components/SessionSearch";
+import type { SidePanelView } from "./components/SidePanelHost";
+import { SidePanelHost } from "./components/SidePanelHost";
+import { TimelinePanel } from "./components/TimelinePanel";
+import { InlineNotice } from "./components/ui/InlineNotice";
+import { WorkbenchRail } from "./components/WorkbenchRail";
+import { WorkbenchWelcome } from "./components/WorkbenchWelcome";
+import { ProjectSwitcher } from "./components/ProjectSwitcher";
+import { Tabs } from "@kobalte/core/tabs";
+import { readConversationView, persistConversationView, type ConversationView } from "./state/conversation-navigation";
 import { WorkspaceToolsPanel } from "./components/WorkspaceToolsPanel";
 import {
-  clearDeepSeekAPIKey,
-  getWorkbenchState,
-  resetDeepSeekSession,
-  refreshModelProviderModels,
-  refreshMCPServer,
-	refreshPlugins,
-	selectPluginDirectory,
-	installPlugin,
-	uninstallPlugin,
-	revealPlugin,
-  saveDeepSeekAPIKey,
-  saveModelProviderAPIKey,
-  saveModelProviderBillingAPIKey,
-  startChatMessageForSession,
-	resumePausedTeamTask,
-	abandonPausedTeamTask,
-  getActiveChatTasks,
-  guideChatMessage,
-  stopChatMessage,
-  stopSubagent,
-  onChatTaskEvent,
-  onMCPState,
-  setReasoningLevel,
-  saveRuntimeSettings,
-  testDeepSeekConnection,
-  clearModelProviderAPIKey,
-  clearModelProviderBillingAPIKey,
-  getUsageBillingReport,
-  syncUsageBilling,
-  reconcileUsageBilling,
-  deleteModelProvider,
-  listCheckpoints,
-  rewindToCheckpoint,
-  listBranches,
-  switchBranch,
-  forkFromMessage,
-  onApprovalRequest,
-  respondApproval,
-  setPlanMode,
-  listProjects,
-  listSessions,
-  getProjectTree,
-  createProject,
-  switchProject,
-  setProjectPinned,
-  renameProject,
-  archiveProjectTasks,
-  removeProject,
-  openProjectInFileManager,
-  createPermanentWorktree,
-  newSession,
-  switchSession,
-  renameSession,
-  archiveSession,
-  deleteSession,
-  selectDirectory,
-  selectWorktreeParentDirectory,
-  getSessionMessages,
-  getSessionMessagesForSession,
-  onBrowserPreviewOpen,
-  onBrowserPreviewClose,
-  openWorkspaceFile,
-  previewWorkspaceFile,
-  openBrowserURL,
-  openURLInSystemBrowser,
-	revealSecretResult,
-  importSkillMarkdown,
-  getUpdateState,
-  onUpdateState,
-} from "./services/workbench";
-import { defaultReasoningLevel, reasoningOptions as fallbackReasoningOptions } from "./state/reasoning";
-import type {
-  ApprovalRequest,
-  BranchInfo,
-  ChatAttachment,
-  BrowserPreview,
-  ChatTaskEvent,
-  CheckpointInfo,
-  ProjectInfo,
-  ProjectNode,
-  SessionInfo,
-  DeepSeekSessionState,
-  MCPServerSetting,
-  MessagePart,
-  ModelProviderSetting,
-  ReasoningLevel,
-  RuntimeSettings,
-  SkillImportResult,
-  UpdateState,
-  UsageBillingReconciliationInput,
-  UsageBillingReport,
-  UsageBillingSyncInput,
-  UsageMetrics,
-  WorkbenchState,
-  WorkspaceFileRequest,
-  WorkspaceFileView,
-} from "./types";
-
-const fallbackProfile =
-  fallbackReasoningOptions.find((option) => option.id === defaultReasoningLevel) ?? fallbackReasoningOptions[0];
-import { SettingsCenter, ModelRouteMenu } from "./settings-panels";
-import type { ChatMessage, DrawerTab, ViewSnapshot, SidebarSession, SettingsCategory, ThemeMode } from "./ui-types";
-import {
-  defaultSidebarWidth, minSidebarWidth, maxSidebarWidth, defaultBrowserPanelWidth,
+  defaultBrowserPanelWidth,
+  maxSidebarWidth,
   minBrowserPanelWidth, minChatPaneWidth,
+  minSidebarWidth,
 } from "./constants";
 import {
-  formatPercent, formatInteger, shortHash, categoryForDrawerTab, baseNameFromPath,
-  selectedModelProvider, selectedModelName, providerReadyForChat, providerConnectionSummary,
-  createChatMessage, emptyUsageMetrics, fallbackDeepSeekState, fallbackDeepSeekSession,
-  fallbackCacheHealth, fallbackRuntimeSettings, fallbackConfigFiles, readStoredSidebarWidth,
-  persistSidebarWidth, readStoredBrowserPanelWidth, persistBrowserPanelWidth,
-  readStoredThemeMode, persistThemeMode, applyThemeMode,
-  applySidebarWidth, clamp, messageTitle, formatClock,
+  applySidebarWidth,
+  applyThemeMode,
+  baseNameFromPath,
+  clamp,
+  createChatMessage, emptyUsageMetrics,
+  fallbackCacheHealth,
+  fallbackConfigFiles,
+  fallbackDeepSeekSession,
+  fallbackDeepSeekState,
+  fallbackRuntimeSettings,
+  findSettingsItem,
+  persistBrowserPanelWidth,
+  persistSidebarWidth,
+  persistThemeMode,
+  providerConnectionSummary,
+  providerReadyForChat,
+  readStoredBrowserPanelWidth,
+  readStoredSidebarWidth,
+  readStoredThemeMode,
+  selectedModelName,
+  selectedModelProvider
 } from "./format";
-import { formatElapsedDuration } from "./lib/duration";
-import { errorMessage } from "./lib/errors";
-import { reconcileSessionMessages, rollbackOptimisticTurnState } from "./lib/session-history";
-import { clearGuidanceMessages, dequeueMessage, enqueueMessage, prioritizeMessage, removeMessage, takeMessageForEditing } from "./lib/message-queue";
-import type { ComposerLink, QueuedComposerMessage } from "./lib/message-queue";
+import { hasMeaningfulTurnOutput } from "./lib/chat-results";
+import type { ComposerHistory, ComposerSnapshot } from "./lib/composer-history";
 import {
   composerSnapshotsEqual,
   emptyComposerHistory,
@@ -208,11 +66,39 @@ import {
   redoComposerSnapshot,
   undoComposerSnapshot,
 } from "./lib/composer-history";
-import type { ComposerHistory, ComposerSnapshot } from "./lib/composer-history";
-import { hasMeaningfulTurnOutput } from "./lib/chat-results";
-import { appendLiveAssistantText, displayMessageParts, liveTaskStatus, settleLiveTimelineParts, updateLiveTimelineParts } from "./lib/timeline";
-import { createStableListViews } from "./lib/stable-list";
+import { formatElapsedDuration } from "./lib/duration";
+import { errorMessage } from "./lib/errors";
+import type { ComposerLink, QueuedComposerMessage } from "./lib/message-queue";
+import { clearGuidanceMessages, dequeueMessage, enqueueMessage, prioritizeMessage, removeMessage, takeMessageForEditing } from "./lib/message-queue";
 import { redactSensitiveTextForDisplay } from "./lib/sensitive-text";
+import { reconcileSessionMessages, rollbackOptimisticTurnState } from "./lib/session-history";
+import { createStableListViews } from "./lib/stable-list";
+import { appendLiveAssistantText, displayMessageParts, liveTaskStatus, settleLiveTimelineParts, updateLiveTimelineParts } from "./lib/timeline";
+import { abandonPausedTeamTask, archiveProjectTasks, archiveSession, clearModelProviderAPIKey, clearModelProviderBillingAPIKey, createPermanentWorktree, createProject, deleteModelProvider, deleteSession, forkFromMessage, getActiveChatTasks, getProjectTree, getSessionMessagesForSession, getUsageBillingReport, getWorkbenchState, guideChatMessage, importSkillMarkdown, installPlugin, listBranches, listCheckpoints, timelineAvailable, listSessions, newSession, openBrowserURL, openProjectInFileManager, openURLInSystemBrowser, openWorkspaceFile, previewWorkspaceFile, reconcileUsageBilling, refreshMCPServer, refreshModelProviderModels, refreshPlugins, removeProject, renameProject, renameSession, respondApproval, resumePausedTeamTask, revealPlugin, revealSecretResult, rewindToCheckpoint, saveModelProviderAPIKey, saveModelProviderBillingAPIKey, saveRuntimeSettings, selectDirectory, selectPluginDirectory, selectWorktreeParentDirectory, setPlanMode, setProjectPinned, setReasoningLevel, startChatMessageForSession, stopChatMessage, stopSubagent, switchBranch, switchProject, switchSession, syncUsageBilling, uninstallPlugin } from "./services/workbench";
+import { defaultReasoningLevel, reasoningOptions as fallbackReasoningOptions } from "./state/reasoning";
+import { createWorkbenchNavigation } from "./state/workbench-navigation";
+import { createWorkbenchRuntime } from "./state/workbench-runtime";
+import type {
+  ApprovalRequest,
+  BranchInfo,
+  BrowserPreview,
+  ChatAttachment,
+  ChatTaskEvent,
+  CheckpointInfo,
+  MessagePart,
+  ProjectNode,
+  ReasoningLevel,
+  RuntimeSettings,
+  SessionInfo,
+  SkillImportResult,
+  UpdateState,
+  UsageBillingReconciliationInput,
+  UsageBillingReport,
+  UsageBillingSyncInput,
+  WorkbenchState,
+  WorkspaceFileRequest,
+  WorkspaceFileView
+} from "./types";
 import type { UIAppearancePreferences } from "./ui-appearance";
 import {
   applyUIAppearance,
@@ -222,6 +108,11 @@ import {
   readStoredUIAppearance,
   resolveEffectiveUIScale,
 } from "./ui-appearance";
+import type { ChatMessage, ThemeMode } from "./ui-types";
+
+const fallbackProfile =
+  fallbackReasoningOptions.find((option) => option.id === defaultReasoningLevel) ?? fallbackReasoningOptions[0];
+const SettingsCenter = lazy(() => import("./settings-panels").then(module => ({ default: module.SettingsCenter })));
 
 type ProjectMenuState = {
   project: ProjectNode;
@@ -320,19 +211,16 @@ function App() {
   const [loading, setLoading] = createSignal(true);
   const [updatingReasoning, setUpdatingReasoning] = createSignal(false);
   const [pendingReasoningLevel, setPendingReasoningLevel] = createSignal<ReasoningLevel | undefined>();
-  const [savingKey, setSavingKey] = createSignal(false);
-  const [testingDeepSeek, setTestingDeepSeek] = createSignal(false);
-  const [clearingKey, setClearingKey] = createSignal(false);
+
+
   const [savingRuntime, setSavingRuntime] = createSignal(false);
   const [sendingMessage, setSendingMessage] = createSignal(false);
 	const [teamLifecycleBusy, setTeamLifecycleBusy] = createSignal(false);
   const [activeChatTaskID, setActiveChatTaskID] = createSignal("");
-  const [streamingMessageID, setStreamingMessageID] = createSignal("");
   const [activeTaskProgress, setActiveTaskProgress] = createSignal<TaskProgressPart>();
   const [queuedMessages, setQueuedMessages] = createSignal<QueuedComposerMessage[]>([]);
   const [queuedMessagesBySession, setQueuedMessagesBySession] = createSignal<Record<string, QueuedComposerMessage[]>>({});
   const [resettingSession, setResettingSession] = createSignal(false);
-  const [apiKeyDraft, setAPIKeyDraft] = createSignal("");
   const [providerKeyDrafts, setProviderKeyDrafts] = createSignal<Record<string, string>>({});
   const [providerBillingKeyDrafts, setProviderBillingKeyDrafts] = createSignal<Record<string, string>>({});
   const [savingProviderID, setSavingProviderID] = createSignal("");
@@ -361,8 +249,18 @@ function App() {
   const [messageDisclosures, setMessageDisclosures] = createSignal<Record<string, boolean>>({});
   const [chatNearBottom, setChatNearBottom] = createSignal(true);
   const [runtimeDraft, setRuntimeDraft] = createSignal<RuntimeSettings>();
-  const [drawerOpen, setDrawerOpen] = createSignal(false);
-  const [activeSettingsCategory, setActiveSettingsCategory] = createSignal<SettingsCategory>("general");
+  const { drawerOpen, activeSection, activeSettingsCategory, openSettings, closeDrawer, canGoBack, canGoForward, navigateBack, navigateForward } = createWorkbenchNavigation();
+  const [sidebarCollapsed, setSidebarCollapsed] = createSignal(window.innerWidth < 900);
+  onMount(() => {
+    const collapseSidebarInNarrowWindow = () => {
+      if (window.innerWidth < 900) setSidebarCollapsed(true);
+    };
+    window.addEventListener("resize", collapseSidebarInNarrowWindow);
+    onCleanup(() => window.removeEventListener("resize", collapseSidebarInNarrowWindow));
+  });
+  const [sessionSearchOpen, setSessionSearchOpen] = createSignal(false);
+  const [floatingMenus, setFloatingMenus] = createSignal<Record<string, boolean>>({});
+  const trackFloatingMenu = (name: string, open: boolean) => setFloatingMenus((current) => ({ ...current, [name]: open }));
   const [error, setError] = createSignal("");
   const [updateBannerState, setUpdateBannerState] = createSignal<UpdateState>();
   const [updateBannerVisible, setUpdateBannerVisible] = createSignal(false);
@@ -375,18 +273,24 @@ function App() {
   const [themeMode, setThemeMode] = createSignal<ThemeMode>(readStoredThemeMode());
   const [uiAppearance, setUIAppearance] = createSignal<UIAppearancePreferences>(storedUIAppearance);
   const [effectiveUIScale, setEffectiveUIScale] = createSignal(resolveEffectiveUIScale(storedUIAppearance));
-  // 侧边栏交互状态（此前为写死的假 UI，现改为真实信号驱动）
-  const [sidebarTab, setSidebarTab] = createSignal<"groups" | "projects">("groups");
-  const [showAllSessions, setShowAllSessions] = createSignal(false);
   // 多项目 / 多会话状态。
-  const [projects, setProjects] = createSignal<ProjectInfo[]>([]);
   const [sessions, setSessions] = createSignal<SessionInfo[]>([]);
   const [projectTree, setProjectTree] = createSignal<ProjectNode[]>([]);
+  const [conversationView, setConversationView] = createSignal<ConversationView>(readConversationView());
+  const selectConversationView = (value: string) => {
+    const view = value === "recent" ? "recent" : "projects";
+    setConversationView(view);
+    persistConversationView(view);
+  };
+  const [expandedProjects, setExpandedProjects] = createSignal<Record<string, boolean>>({});
+  const [showArchived, setShowArchived] = createSignal(false);
+  const recentSessions = createMemo(() => projectTree().flatMap((project) => project.sessions
+    .filter((session) => showArchived() || !session.archived)
+    .map((session) => ({ ...session, projectId: project.id, projectName: project.name })))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
   const [sessionTaskRuntimes, setSessionTaskRuntimes] = createSignal<Record<string, SessionTaskRuntime>>({});
   const [sessionViewStates, setSessionViewStates] = createSignal<Record<string, SessionViewState>>({});
   const [selectedSessionID, setSelectedSessionID] = createSignal("");
-  const [sessionSort, setSessionSort] = createSignal<"recent" | "name">("recent");
-  const [showArchived, setShowArchived] = createSignal(false);
   const [switchingSession, setSwitchingSession] = createSignal(false);
   const [deletingSessionID, setDeletingSessionID] = createSignal("");
   const [sessionActionBusyID, setSessionActionBusyID] = createSignal("");
@@ -395,13 +299,13 @@ function App() {
   const [projectMenu, setProjectMenu] = createSignal<ProjectMenuState>();
   const [projectDialog, setProjectDialog] = createSignal<ProjectDialogState>();
   const [projectActionBusy, setProjectActionBusy] = createSignal(false);
-  // 视图历史栈：记录“抽屉是否打开 + 当前设置分类”，供前进/后退按钮导航。
-  const [viewHistory, setViewHistory] = createSignal<ViewSnapshot[]>([{ drawer: false, category: "general" }]);
-  const [viewCursor, setViewCursor] = createSignal(0);
   // Rewind 时间线状态。
   const [timelineOpen, setTimelineOpen] = createSignal(false);
   const [checkpoints, setCheckpoints] = createSignal<CheckpointInfo[]>([]);
   const [branches, setBranches] = createSignal<BranchInfo[]>([]);
+  const [timelineLoading, setTimelineLoading] = createSignal(false);
+  const [timelineError, setTimelineError] = createSignal("");
+  const [timelineNotice, setTimelineNotice] = createSignal("");
   const [rewinding, setRewinding] = createSignal(false);
   const [forkingMessageID, setForkingMessageID] = createSignal("");
   const [editingMessageID, setEditingMessageID] = createSignal("");
@@ -419,6 +323,7 @@ function App() {
   const [selectedSubagentTaskID, setSelectedSubagentTaskID] = createSignal("");
   const [stoppingSubagentTaskID, setStoppingSubagentTaskID] = createSignal("");
   let chatScrollRef: HTMLElement | undefined;
+  let timelineTriggerRef: HTMLButtonElement | undefined;
   let shellRef: HTMLElement | undefined;
   let workbenchRef: HTMLDivElement | undefined;
 	let composerEditorRef: HTMLTextAreaElement | undefined;
@@ -462,7 +367,6 @@ function App() {
   const hasCacheTokens = createMemo(() => usage().promptCacheHitTokens + usage().promptCacheMissTokens > 0);
   const cacheHealth = createMemo(() => state()?.cacheHealth ?? fallbackCacheHealth());
   const snapshots = createMemo(() => state()?.mcpSnapshots ?? []);
-  const builtinToolCount = createMemo(() => snapshots().find((snapshot) => snapshot.server === "builtin")?.tools.length ?? 0);
   const mcpServers = createMemo(() => state()?.mcpServers ?? []);
 	const pluginStatuses = createMemo(() => state()?.plugins ?? []);
   const skillsIndex = createMemo(() => state()?.skillsIndex ?? []);
@@ -580,18 +484,13 @@ function App() {
 
   const messageDisclosureKey = (messageID: string, disclosureKey: string) => `${messageID}\u0000${disclosureKey}`;
   const isMessageDisclosureOpen = (messageID: string, disclosureKey: string) => (
-    messageDisclosures()[messageDisclosureKey(messageID, disclosureKey)] ?? false
+    messageDisclosures()[messageDisclosureKey(messageID, disclosureKey)]
   );
   const setMessageDisclosureOpen = (messageID: string, disclosureKey: string, open: boolean) => {
     const key = messageDisclosureKey(messageID, disclosureKey);
     setMessageDisclosures((current) => {
-      if ((current[key] ?? false) === open) return current;
-      if (!open) {
-        const next = { ...current };
-        delete next[key];
-        return next;
-      }
-      return { ...current, [key]: true };
+      if (current[key] === open) return current;
+      return { ...current, [key]: open };
     });
   };
   const revealMessageSecret = async (secretID: string) => {
@@ -659,17 +558,8 @@ function App() {
     const latestAssistant = [...messages()].reverse().find((message) => message.role === "assistant" && !message.streaming);
     return latestAssistant && messageHasTrackedFileChanges(latestAssistant) ? latestAssistant.id : "";
   });
-  // 完全访问 = 审批策略为 never（命令/文件修改不再逐次弹框确认）。
-  const fullAccess = createMemo(() => runtimeSettings().approvalPolicy === "never");
-  const modelName = createMemo(() => {
-    const provider = activeChatProvider();
-    const model = deepSeekSession().model || activeChatModel();
-    if (!provider) {
-      return model || "选择模型";
-    }
-    return model ? `${provider.name} · ${model}` : provider.name;
-  });
-  const canSend = createMemo(() => (promptDraft().trim().length > 0 || composerTailDraft().trim().length > 0 || composerLinks().length > 0 || composerAttachments().length > 0) && activeProviderReady() && Boolean(activeChatModel()));
+  const currentPermission = createMemo(() => permissionMode(runtimeSettings()));
+  const canSend = createMemo(() => !state()?.storageError && !loading() && !switchingSession() && !resettingSession() && !rewinding() && (promptDraft().trim().length > 0 || composerTailDraft().trim().length > 0 || composerLinks().length > 0 || composerAttachments().length > 0) && activeProviderReady() && Boolean(activeChatModel()));
 
   const requestConfirmationDecision = (request: ConfirmationRequest): Promise<ConfirmationResult> =>
     new Promise((resolve) => {
@@ -878,46 +768,6 @@ function App() {
       setError(errorMessage(err));
     }
   };
-
-  // 真实会话列表。当前后端仅支持单会话，故此处只反映“当前对话”；
-  // 多会话历史待后端事件流存储落地后再填充（不再摆放写死的演示条目）。
-  const sidebarSessions = createMemo(() => {
-    const list: SidebarSession[] = [];
-    if (messages().length > 0) {
-      list.push({
-        title: messages()[messages().length - 1]?.content || "当前对话",
-        meta: deepSeekSession().active ? `${formatInteger(deepSeekSession().turnCount)} 轮` : "进行中",
-        active: !drawerOpen(),
-        dot: true,
-        onClick: () => setDrawerOpen(false),
-      });
-    }
-    return list;
-  });
-
-  // 侧边栏“快捷入口”：真实指标驱动，指向设置抽屉的对应分类。
-  const sidebarShortcuts = createMemo<SidebarSession[]>(() => [
-    {
-      title: "缓存命中率",
-      meta: formatPercent(cacheHitRate(), hasCacheTokens()),
-      active: activeSettingsCategory() === "usage" && drawerOpen(),
-      dot: cacheHealth().status === "low",
-      onClick: () => openDrawer("cache"),
-    },
-    {
-      title: "工具链与 Skills",
-      meta: `${formatInteger(builtinToolCount())} 工具 · ${formatInteger(skillsIndex().length)} Skills`,
-      active: activeSettingsCategory() === "skills" && drawerOpen(),
-      dot: false,
-      onClick: () => openDrawer("tools"),
-    },
-  ]);
-
-  // 折叠时最多显示 4 条会话，其余由“显示更多”展开。
-  const visibleSessions = createMemo(() =>
-    showAllSessions() ? sidebarSessions() : sidebarSessions().slice(0, 4),
-  );
-  const hasMoreSessions = createMemo(() => sidebarSessions().length > 4);
 
   const updateSessionStreamingMessage = (
     projectID: string,
@@ -1156,7 +1006,7 @@ function App() {
           updateSessionStreamingMessage(projectID, sessionID, (message) => ({
             ...message,
             content: previousResult.content || message.content || "本轮没有返回可展示内容。",
-            reasoning: previousResult.reasoning,
+            reasoning: previousResult.reasoning || message.reasoning,
             model: previousResult.model,
             usage: previousResult.usage,
             parts: previousResult.parts,
@@ -1202,6 +1052,7 @@ function App() {
           durationMs: result?.durationMs ?? message.durationMs,
           failed: false,
           cancelled: true,
+          historyError: result?.historyError,
           streaming: false,
           status: "已停止",
         }));
@@ -1225,6 +1076,7 @@ function App() {
           durationMs: result?.durationMs ?? message.durationMs,
           failed: true,
           cancelled: false,
+          historyError: result?.historyError,
           streaming: false,
           status: undefined,
         }));
@@ -1266,7 +1118,6 @@ function App() {
     if (removed && belongsToVisibleTask) {
       setSendingMessage(false);
       setActiveChatTaskID("");
-      setStreamingMessageID("");
 	  setActiveTaskProgress(undefined);
       setPendingReasoningLevel(undefined);
       return pendingReasoning && pendingReasoning !== profile().id ? pendingReasoning : undefined;
@@ -1292,8 +1143,9 @@ function App() {
     if (!element) {
       return;
     }
-    element.scrollTo({ top: element.scrollHeight, behavior });
-    if (behavior === "auto") {
+    const scrollBehavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : behavior;
+    element.scrollTo({ top: element.scrollHeight, behavior: scrollBehavior });
+    if (scrollBehavior === "auto") {
       setChatNearBottom(true);
     }
   };
@@ -1446,7 +1298,7 @@ function App() {
           updateStreamingMessage((message) => ({
             ...message,
             content: previousResult.content || message.content || "本轮没有返回可展示内容。",
-            reasoning: previousResult.reasoning,
+            reasoning: previousResult.reasoning || message.reasoning,
             model: previousResult.model,
             usage: previousResult.usage,
             parts: previousResult.parts,
@@ -1458,8 +1310,6 @@ function App() {
         if (event.guidanceId) {
           setQueuedMessages((current) => removeMessage(current, event.guidanceId!));
         }
-        const guidance = event.guidance?.trim() ?? "";
-        const guidanceAttachments = event.attachments?.map((attachment) => ({ ...attachment })) ?? [];
         cacheSessionTaskView(eventProjectID, eventSessionID);
         const guidedTask = beginGuidedTaskMessage(eventProjectID, eventSessionID, event);
         if (!guidedTask) break;
@@ -1468,7 +1318,6 @@ function App() {
           guidedTask.userMessage,
           guidedTask.assistantMessage,
         ]);
-        setStreamingMessageID(guidedTask.assistantMessage.id);
         break;
       }
       case "completed": {
@@ -1484,7 +1333,7 @@ function App() {
           updateStreamingMessage((message) => ({
             ...message,
             content: result.content || message.content || "本轮没有返回可展示内容。",
-            reasoning: result.reasoning,
+            reasoning: result.reasoning || message.reasoning,
             model: result.model,
             usage: result.usage,
             parts: result.parts,
@@ -1517,7 +1366,7 @@ function App() {
         if (!retainedTurn) {
           rollbackOptimisticTurn(eventProjectID, eventSessionID);
         } else {
-          setError("");
+          setError(result?.historyError || "");
           updateStreamingMessage((current) => ({
             ...current,
             content: result?.content || current.content,
@@ -1528,6 +1377,7 @@ function App() {
             durationMs: result?.durationMs ?? current.durationMs,
             failed: false,
             cancelled: true,
+            historyError: result?.historyError,
             streaming: false,
             status: "已停止",
           }));
@@ -1543,7 +1393,7 @@ function App() {
         }
         const pendingReasoning = finishChatTask(eventProjectID, eventSessionID, event.taskId);
         void (async () => {
-          if (!event.forced && eventProjectID === activeProjectID() && eventSessionID === activeSessionID()) {
+          if (!event.forced && !result?.historyError && eventProjectID === activeProjectID() && eventSessionID === activeSessionID()) {
             await restoreSessionMessages(true, eventProjectID, eventSessionID);
           }
           await applyPendingReasoning(pendingReasoning);
@@ -1559,7 +1409,7 @@ function App() {
         if (result) {
           setState(result.state);
         }
-        setError(retainedTurn ? "" : message);
+        setError(result?.historyError || (retainedTurn ? "" : message));
         if (!retainedTurn) {
           rollbackOptimisticTurn(eventProjectID, eventSessionID);
         }
@@ -1573,6 +1423,7 @@ function App() {
             parts: settleLiveProgress(result?.parts?.length ? result.parts : current.parts, "failed"),
             durationMs: result?.durationMs ?? current.durationMs,
             failed: true,
+            historyError: result?.historyError,
             cancelled: false,
             streaming: false,
             status: undefined,
@@ -1589,7 +1440,7 @@ function App() {
         }
 		const pendingReasoning = finishChatTask(eventProjectID, eventSessionID, event.taskId);
 		void (async () => {
-		  if (eventProjectID === activeProjectID() && eventSessionID === activeSessionID()) {
+		  if (!result?.historyError && eventProjectID === activeProjectID() && eventSessionID === activeSessionID()) {
 			await restoreSessionMessages(true, eventProjectID, eventSessionID);
 		  }
 		  await applyPendingReasoning(pendingReasoning);
@@ -1659,29 +1510,27 @@ function App() {
     }
   });
 
-  onMount(() => {
-    applyThemeMode(themeMode());
-    applySidebarWidth(sidebarWidth(), shellRef);
-    syncUIAppearance();
-    void (async () => {
+  createWorkbenchRuntime({
+    initialize: async () => {
+      applyThemeMode(themeMode());
+      applySidebarWidth(sidebarWidth(), shellRef);
+      syncUIAppearance();
       await recoverActiveChatTasks();
       await refreshState();
       await refreshProjectsAndSessions();
       await restoreSessionMessages();
       activateSessionTask(activeProjectID(), activeSessionID());
-    })();
-    // 订阅后端审批请求，入队等待用户处理。
-    const unsubscribe = onApprovalRequest((req) => {
-      setApprovalQueue((queue) => [...queue, req]);
-    });
-    const unsubscribeBrowserOpen = onBrowserPreviewOpen((preview) => {
-      void handleBrowserPreviewRequest(preview);
-    });
-    const unsubscribeBrowserClose = onBrowserPreviewClose(closeBrowserPanel);
-    const unsubscribeChatTask = onChatTaskEvent(handleChatTaskEvent);
-    const unsubscribeMCPState = onMCPState(setState);
-    const unsubscribeUpdateState = onUpdateState(presentUpdateBanner);
-    void getUpdateState().then(presentUpdateBanner).catch(() => undefined);
+    },
+    approval: (request) => setApprovalQueue((queue) => [...queue, request]),
+    browserOpen: (preview) => { void handleBrowserPreviewRequest(preview); },
+    browserClose: closeBrowserPanel,
+    task: handleChatTaskEvent,
+    state: setState,
+    update: presentUpdateBanner,
+    error: (error) => setError(errorMessage(error)),
+  });
+
+  onMount(() => {
     const closeActionMenusOnOutsidePress = (event: PointerEvent) => {
       const target = event.target;
       if (projectMenu()) {
@@ -1712,12 +1561,24 @@ function App() {
     };
     window.addEventListener("pointerdown", closeActionMenusOnOutsidePress);
     window.addEventListener("keydown", closeProjectUIOnEscape);
-    onCleanup(unsubscribe);
-    onCleanup(unsubscribeBrowserOpen);
-    onCleanup(unsubscribeBrowserClose);
-    onCleanup(unsubscribeChatTask);
-    onCleanup(unsubscribeMCPState);
-    onCleanup(unsubscribeUpdateState);
+    const handleWorkbenchShortcut = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.isComposing) return;
+      const key = event.key.toLowerCase();
+      const modalOpen = Boolean(document.querySelector('[role="dialog"][aria-modal="true"]'));
+      if (key === "k") {
+        if (modalOpen && !sessionSearchOpen()) return;
+        event.preventDefault();
+        setSessionSearchOpen((open) => !open);
+      } else if (key === "b" && !modalOpen) {
+        event.preventDefault();
+        setSidebarCollapsed((collapsed) => !collapsed);
+      } else if (key === "n" && !modalOpen) {
+        event.preventDefault();
+        if (!resettingSession()) void handleNewSession();
+      }
+    };
+    window.addEventListener("keydown", handleWorkbenchShortcut);
+    onCleanup(() => window.removeEventListener("keydown", handleWorkbenchShortcut));
     onCleanup(clearUpdateBannerTimer);
     onCleanup(() => window.removeEventListener("pointerdown", closeActionMenusOnOutsidePress));
     onCleanup(() => window.removeEventListener("keydown", closeProjectUIOnEscape));
@@ -1727,6 +1588,8 @@ function App() {
   const activeApproval = createMemo(() => approvalQueue()[0]);
 	const browserSurfaceSuspended = createMemo(() => Boolean(
 		drawerOpen()
+		|| sessionSearchOpen()
+		|| Object.values(floatingMenus()).some(Boolean)
 		|| timelineOpen()
 		|| activeApproval()
 		|| confirmation()
@@ -1807,44 +1670,6 @@ function App() {
       setError(errorMessage(err));
     } finally {
       setUpdatingReasoning(false);
-    }
-  };
-
-  const saveKey = async () => {
-    setSavingKey(true);
-    setError("");
-    try {
-      setState(await saveDeepSeekAPIKey(apiKeyDraft()));
-      setAPIKeyDraft("");
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setSavingKey(false);
-    }
-  };
-
-  const testConnection = async () => {
-    setTestingDeepSeek(true);
-    setError("");
-    try {
-      setState(await testDeepSeekConnection());
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setTestingDeepSeek(false);
-    }
-  };
-
-  const clearKey = async () => {
-    setClearingKey(true);
-    setError("");
-    try {
-      setState(await clearDeepSeekAPIKey());
-      setAPIKeyDraft("");
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setClearingKey(false);
     }
   };
 
@@ -2120,26 +1945,6 @@ function App() {
 		}
 	};
 
-  const resetSession = async () => {
-    setResettingSession(true);
-    setError("");
-    try {
-      setState(await resetDeepSeekSession());
-      setMessages([]);
-      setActiveTaskProgress(undefined);
-      setQueuedMessages([]);
-      setComposerDraft("");
-      setComposerTail("");
-      setComposerAttachments([]);
-      setComposerLinks([]);
-      resetComposerHistory();
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setResettingSession(false);
-    }
-  };
-
   const saveRuntime = async () => {
     setSavingRuntime(true);
     setError("");
@@ -2317,10 +2122,7 @@ function App() {
   };
 
   const primeWelcomePrompt = (prompt: string) => {
-    setComposerDraft(prompt);
-    setComposerTail("");
-    setComposerLinks([]);
-    resetComposerHistory();
+    commitComposerSnapshot({ ...currentComposerSnapshot(), draft: prompt, tail: "", links: [] });
     queueMicrotask(focusComposerEnd);
   };
 
@@ -2497,7 +2299,6 @@ function App() {
     setComposerAttachments([]);
     setComposerLinks([]);
     resetComposerHistory();
-    setStreamingMessageID(assistantMessageID);
     setSendingMessage(true);
     const sessionKey = sessionIdentityKey(projectID, sessionID);
     setSessionTaskRuntimes((current) => ({
@@ -2563,7 +2364,6 @@ function App() {
 		setActiveTaskProgress(undefined);
 		setChatNearBottom(true);
 		setMessages((current) => [...current, assistantMessage]);
-		setStreamingMessageID(assistantMessage.id);
 		setSendingMessage(true);
 		setSessionTaskRuntimes((current) => ({
 			...current,
@@ -2603,7 +2403,6 @@ function App() {
 				setMessages((current) => current.filter((item) => item.id !== assistantMessage.id));
 				setSendingMessage(false);
 				setActiveChatTaskID("");
-				setStreamingMessageID("");
 			}
 			setSessionTaskRuntimes((current) => {
 				const next = { ...current };
@@ -2720,6 +2519,7 @@ function App() {
   };
 
   const sendMessage = async () => {
+    if (!canSend()) return;
     if (currentSessionBusy()) {
       enqueueCurrentMessage();
       return;
@@ -2758,10 +2558,12 @@ function App() {
   };
 
   // 拉取项目与会话列表（含 Codex 式项目树）。
+  let projectRefreshGeneration = 0;
   const refreshProjectsAndSessions = async () => {
+    const generation = ++projectRefreshGeneration;
     try {
-      const [projs, sess, tree] = await Promise.all([listProjects(), listSessions(), getProjectTree()]);
-      setProjects(projs);
+      const [sess, tree] = await Promise.all([listSessions(), getProjectTree()]);
+      if (generation !== projectRefreshGeneration) return;
       setSessions(sess);
       setProjectTree(tree);
       const activeProject = tree.find((project) => project.isActive);
@@ -2815,12 +2617,10 @@ function App() {
     if (!task) {
       setSendingMessage(false);
       setActiveChatTaskID("");
-      setStreamingMessageID("");
       return;
     }
     setSendingMessage(true);
     setActiveChatTaskID(task.taskID);
-    setStreamingMessageID(task.messageID);
     setActiveTaskProgress(task.progress ? cloneTaskProgress(task.progress) : undefined);
     setMessages((current) => {
       const composed = redactSensitiveTextForDisplay(composeComposerPrompt(task.prompt, task.links, task.tail));
@@ -2909,14 +2709,22 @@ function App() {
   };
 
   const handleNewSession = async () => {
+    if (loading() || rewinding() || resettingSession() || switchingSession()) return;
+    setResettingSession(true);
     try {
       reloadAfterSessionChange(await newSession());
+      closeDrawer();
+      queueMicrotask(() => composerEditorRef?.focus());
     } catch (err) {
       setError(errorMessage(err));
+    } finally {
+      setResettingSession(false);
     }
   };
 
   const handleSwitchSession = async (projectID: string, sessionID: string) => {
+    if (loading() || rewinding() || switchingSession() || resettingSession()) return;
+    if (!workspaceChangeAllowed(projectID)) return;
     setSwitchingSession(true);
     try {
       rememberCurrentSessionQueue();
@@ -2933,15 +2741,29 @@ function App() {
     }
   };
 
+  function workspaceChangeAllowed(projectID: string) {
+    if (projectID !== activeProjectID() && (runtimeDraft() || hasProviderKeyDrafts())) {
+      setError("切换项目前，请先保存或还原尚未提交的设置。");
+      openSettings(activeSettingsCategory());
+      return false;
+    }
+    return true;
+  }
+
   const handleSwitchProject = async (projectID: string) => {
+    if (loading() || resettingSession() || rewinding() || switchingSession() || projectID === activeProjectID() || !workspaceChangeAllowed(projectID)) return;
+    setSwitchingSession(true);
     try {
       reloadAfterSessionChange(await switchProject(projectID));
     } catch (err) {
       setError(errorMessage(err));
+    } finally {
+      setSwitchingSession(false);
     }
   };
 
   const handleAddProject = async () => {
+    if (!workspaceChangeAllowed("")) return;
     try {
       const dir = await selectDirectory();
       if (!dir) {
@@ -2949,7 +2771,6 @@ function App() {
       }
       const name = baseNameFromPath(dir);
       reloadAfterSessionChange(await createProject(name, dir));
-      setSidebarTab("projects");
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -3377,31 +3198,54 @@ function App() {
     }
   };
 
-  // 会话列表：按排序与归档筛选。
-  const displayedSessions = createMemo(() => {
-    let list = sessions().filter((s) => showArchived() || !s.archived);
-    if (sessionSort() === "name") {
-      list = [...list].sort((a, b) => a.title.localeCompare(b.title));
-    } else {
-      list = [...list].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    }
-    return list;
+  // A response from a previously selected session must never populate this panel.
+  let timelineRequest = 0;
+  let timelineScope = "";
+  const activeTimelineScope = () => sessionIdentityKey(activeProjectID(), activeSessionID());
+  createEffect(() => {
+    const scope = activeTimelineScope();
+    if (scope === timelineScope) return;
+    timelineScope = scope;
+    timelineRequest++;
+    setCheckpoints([]);
+    setBranches([]);
+    setTimelineError("");
+    setTimelineNotice("");
+    setTimelineLoading(false);
+    setTimelineOpen(false);
   });
+  createEffect(() => { if (drawerOpen()) setTimelineOpen(false); });
 
-  // 拉取当前会话的可回退检查点与分支。
   const refreshCheckpoints = async () => {
+    const request = ++timelineRequest;
+    const scope = activeTimelineScope();
+    setTimelineError("");
+    setTimelineNotice("");
+    if (!timelineAvailable()) {
+      setCheckpoints([]);
+      setBranches([]);
+      setTimelineLoading(false);
+      return;
+    }
+    setTimelineLoading(true);
     try {
       const [cps, brs] = await Promise.all([listCheckpoints(), listBranches()]);
+      if (request !== timelineRequest || scope !== activeTimelineScope()) return;
       setCheckpoints(cps);
       setBranches(brs);
-    } catch {
-      // 时间线是辅助功能，失败不打断主流程。
+    } catch (err) {
+      if (request === timelineRequest && scope === activeTimelineScope()) {
+        setTimelineError("读取时间线失败：" + (errorMessage(err) || "请在当前任务结束后重试。"));
+      }
+    } finally {
+      if (request === timelineRequest) setTimelineLoading(false);
     }
   };
 
   const openTimeline = async () => {
-    await refreshCheckpoints();
     setTimelineOpen(true);
+    setTimelineNotice("");
+    await refreshCheckpoints();
   };
 
   // 开关 Plan 两段式。
@@ -3429,104 +3273,74 @@ function App() {
     }
   };
 
-  // 切换完全访问：在 never（不弹框）与 on-request（每次确认）之间切换审批策略。
-  const toggleFullAccess = async () => {
+  const selectPermissionPreset = async (preset: PermissionPreset) => {
+    if (anySessionBusy() || savingRuntime()) return;
+    setSavingRuntime(true);
+    const projectID = activeProjectID(), sessionID = activeSessionID();
     try {
-      const nextPolicy = fullAccess() ? "on-request" : "never";
-      const nextSettings = { ...runtimeSettings(), approvalPolicy: nextPolicy };
-      setState(await saveRuntimeSettings(nextSettings));
+      const saved = await saveRuntimeSettings(withPermissionPreset(runtimeSettings(), preset));
+      if (projectID === activeProjectID() && sessionID === activeSessionID()) setState(saved);
+      else setState(await getWorkbenchState());
     } catch (err) {
       setError(errorMessage(err));
+    } finally {
+      setSavingRuntime(false);
     }
   };
 
-  // 回退到某个检查点：后端会同时还原对话与文件，随后重建前端消息列表。
+  const applyTimelineAction = async (action: () => Promise<WorkbenchState>, scope: string, message: string) => {
+    setRewinding(true);
+    setTimelineError("");
+    setTimelineNotice("");
+    try {
+      const nextState = await action();
+      if (scope !== activeTimelineScope()) return;
+      setState(nextState);
+      await restoreSessionMessages();
+      await refreshCheckpoints();
+      await refreshProjectsAndSessions();
+      if (scope === activeTimelineScope()) setTimelineNotice(message);
+    } catch (err) {
+      if (scope === activeTimelineScope()) setTimelineError(errorMessage(err) || "当前会话正在执行任务，请完成或停止后再重试。");
+    } finally {
+      setRewinding(false);
+    }
+  };
+
   const handleRewind = async (checkpointID: string) => {
-    setRewinding(true);
-    try {
-      const nextState = await rewindToCheckpoint(checkpointID);
-      setState(nextState);
-      await restoreSessionMessages();
-      await refreshCheckpoints();
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setRewinding(false);
-    }
+    const checkpoint = checkpoints().find(item => item.id === checkpointID);
+    if (!checkpoint || checkpoint.isCurrent || currentSessionBusy() || rewinding() || !timelineAvailable()) return;
+    const scope = activeTimelineScope();
+    const confirmed = await confirmAction({
+      title: `回退到第 ${checkpoint.turnIndex} 轮？`,
+      message: "此对话和 EchoCode 记录的文件改动会恢复到该检查点。后续进度会保留在对话分支中。",
+      detail: checkpoint.label,
+      confirmLabel: "确认回退",
+      tone: "danger",
+    });
+    if (!confirmed || scope !== activeTimelineScope() || currentSessionBusy() || rewinding()) return;
+    await applyTimelineAction(() => rewindToCheckpoint(checkpointID), scope, `已回退到第 ${checkpoint.turnIndex} 轮。`);
   };
 
-  // 切换分支：文件与对话在后端一起切换，再从事件日志恢复该分支消息。
   const handleSwitchBranch = async (leafID: string) => {
-    setRewinding(true);
-    try {
-      const nextState = await switchBranch(leafID);
-      setState(nextState);
-      await restoreSessionMessages();
-      await refreshCheckpoints();
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setRewinding(false);
-    }
+    const branch = branches().find(item => item.leafId === leafID);
+    if (!branch || branch.isCurrent || currentSessionBusy() || rewinding() || !timelineAvailable()) return;
+    const scope = activeTimelineScope();
+    const confirmed = await confirmAction({
+      title: "切换对话分支？",
+      message: "对话和对应的文件改动将恢复到此分支的末端。当前分支仍会保留。",
+      detail: branch.label,
+      confirmLabel: "切换分支",
+      tone: "danger",
+    });
+    if (!confirmed || scope !== activeTimelineScope() || currentSessionBusy() || rewinding()) return;
+    await applyTimelineAction(() => switchBranch(leafID), scope, "已恢复所选对话分支的进度。");
   };
-
-  function openDrawer(tab: DrawerTab) {
-    openSettings(categoryForDrawerTab(tab));
-  }
-
-  function openSettings(category: SettingsCategory) {
-    setActiveSettingsCategory(category);
-    setDrawerOpen(true);
-    pushView({ drawer: true, category });
-  }
-
-  function closeDrawer() {
-    setDrawerOpen(false);
-    pushView({ drawer: false, category: activeSettingsCategory() });
-  }
-
-  // 把一个视图快照压入历史（截断游标之后的“前进”记录，与浏览器一致）。
-  function pushView(snapshot: ViewSnapshot) {
-    const current = viewHistory()[viewCursor()];
-    if (current && current.drawer === snapshot.drawer && current.category === snapshot.category) {
-      return;
-    }
-    const trimmed = viewHistory().slice(0, viewCursor() + 1);
-    trimmed.push(snapshot);
-    setViewHistory(trimmed);
-    setViewCursor(trimmed.length - 1);
-  }
-
-  // 应用某个历史快照（后退/前进时调用，不再写入历史）。
-  function applyView(snapshot: ViewSnapshot) {
-    setActiveSettingsCategory(snapshot.category);
-    setDrawerOpen(snapshot.drawer);
-  }
-
-  const canGoBack = createMemo(() => viewCursor() > 0);
-  const canGoForward = createMemo(() => viewCursor() < viewHistory().length - 1);
-
-  function navigateBack() {
-    if (!canGoBack()) {
-      return;
-    }
-    const next = viewCursor() - 1;
-    setViewCursor(next);
-    applyView(viewHistory()[next]);
-  }
-
-  function navigateForward() {
-    if (!canGoForward()) {
-      return;
-    }
-    const next = viewCursor() + 1;
-    setViewCursor(next);
-    applyView(viewHistory()[next]);
-  }
 
   const resizeSidebar = (clientX: number) => {
     const left = shellRef?.getBoundingClientRect().left ?? 0;
-    const width = clamp((clientX - left) / Math.max(effectiveUIScale(), 0.01), minSidebarWidth, maxSidebarWidth);
+    const railWidth = Number.parseFloat(getComputedStyle(shellRef ?? document.documentElement).getPropertyValue("--rail-width")) || 52;
+    const width = clamp((clientX - left) / Math.max(effectiveUIScale(), 0.01) - railWidth, minSidebarWidth, maxSidebarWidth);
     setSidebarWidth(width);
     applySidebarWidth(width, shellRef);
   };
@@ -3551,6 +3365,7 @@ function App() {
   };
 
   const startSidebarResize = (event: PointerEvent & { currentTarget: HTMLElement }) => {
+    if (event.button !== 0 || resizingSidebar()) return;
     event.preventDefault();
     pointerSidebarResizeActive = true;
     setResizingSidebar(true);
@@ -3720,10 +3535,20 @@ function App() {
     window.removeEventListener("mouseup", stopMouseBrowserResize);
   });
 
-  const resetSidebarWidth = () => {
-    setSidebarWidth(defaultSidebarWidth);
-    applySidebarWidth(defaultSidebarWidth, shellRef);
-    persistSidebarWidth(defaultSidebarWidth);
+  const updateSidebarWidth = (width: number) => {
+    const next = Math.round(clamp(width, minSidebarWidth, maxSidebarWidth));
+    setSidebarWidth(next);
+    applySidebarWidth(next, shellRef);
+    persistSidebarWidth(next);
+  };
+
+  const sidebarResizeControl: SidebarResizeControl = {
+    value: sidebarWidth,
+    onChange: updateSidebarWidth,
+    onPointerDown: startSidebarResize,
+    onPointerMove: moveSidebarResize,
+    onPointerUp: stopSidebarResize,
+    onMouseDown: startMouseSidebarResize,
   };
 
   const toggleTheme = () => {
@@ -3731,13 +3556,6 @@ function App() {
     setThemeMode(next);
     applyThemeMode(next, shellRef);
     persistThemeMode(next);
-  };
-
-  const nudgeSidebarWidth = (direction: -1 | 1) => {
-    const next = clamp(sidebarWidth() + direction * 16, minSidebarWidth, maxSidebarWidth);
-    setSidebarWidth(next);
-    applySidebarWidth(next, shellRef);
-    persistSidebarWidth(next);
   };
 
   const setAndPersistBrowserPanelWidth = (width: number) => {
@@ -3781,16 +3599,35 @@ function App() {
   return (
     <main
       class="mh-shell"
+      aria-busy={loading()}
       classList={{
         resizing: resizingSidebar(),
         "resizing-browser": resizingBrowserPanel(),
         "theme-light": themeMode() === "light",
         "theme-dark": themeMode() === "dark",
+        "sidebar-collapsed": sidebarCollapsed(),
       }}
       ref={shellRef}
       style={{ "--sidebar-width": `${sidebarWidth()}px` } as JSX.CSSProperties}
     >
-      <AppTitleBar />
+      <AppTitleBar
+        pageTitle={drawerOpen() ? findSettingsItem(activeSettingsCategory()).label : "EchoCode"}
+        sidebarCollapsed={sidebarCollapsed()}
+        sidebarControls={activeSection() === "settings" ? "settings-sidebar settings-mobile-navigation" : "workbench-sidebar"}
+        onToggleSidebar={() => setSidebarCollapsed((value) => !value)}
+        canGoBack={canGoBack()}
+        canGoForward={canGoForward()}
+        onBack={navigateBack}
+        onForward={navigateForward}
+      />
+      <WorkbenchRail section={activeSection()} dark={themeMode() === "dark"} onChat={closeDrawer} onSettings={openSettings} onToggleTheme={toggleTheme} />
+      <Show when={sessionSearchOpen()}>
+        <SessionSearch open projects={projectTree()} onOpenChange={setSessionSearchOpen} onSelect={(projectID, sessionID) => {
+          closeDrawer();
+          if (sessionID) void handleSwitchSession(projectID, sessionID);
+          else void handleSwitchProject(projectID);
+        }} />
+      </Show>
       <Show when={updateBannerVisible() && updateBannerState()}>
         {(update) => (
           <section
@@ -3833,54 +3670,27 @@ function App() {
           </section>
         )}
       </Show>
-      <aside class="mh-sidebar" aria-label="EchoCode 导航">
+      <aside id="workbench-sidebar" class="mh-sidebar" aria-label="EchoCode 导航" inert={drawerOpen() || sidebarCollapsed()} aria-hidden={drawerOpen() || sidebarCollapsed()}>
         <div class="sidebar-top">
-          <button
-            class="ghost-icon"
-            type="button"
-            title="后退"
-            disabled={!canGoBack()}
-            onClick={navigateBack}
-          >
-            <ArrowLeft size={16} />
-          </button>
-          <button
-            class="ghost-icon"
-            type="button"
-            title="前进"
-            disabled={!canGoForward()}
-            onClick={navigateForward}
-          >
-            <ArrowRight size={16} />
-          </button>
-          <button
-            class="connection-pill"
-            classList={{ ok: activeProviderConnection().ok, warn: !activeProviderConnection().ready }}
-            type="button"
-            onClick={() => openSettings("models")}
-          >
-            <RefreshCw size={13} classList={{ spinning: loading() || testingDeepSeek() }} />
-            {activeProviderConnection().label}
-          </button>
+          <span class="sidebar-brand">工作区</span>
         </div>
 
         <div class="quick-menu">
-          <button type="button" onClick={() => void handleNewSession()} disabled={resettingSession()}>
+          <button type="button" aria-label="新对话" aria-keyshortcuts="Control+N Meta+N" onClick={() => void handleNewSession()} disabled={loading() || resettingSession()}>
             <MessageSquarePlus size={16} />
-            <span>新建任务</span>
+            <span>新对话</span><kbd>Ctrl N</kbd>
           </button>
-          <button type="button" onClick={() => openSettings("index")}>
+          <button type="button" aria-label="搜索对话" aria-keyshortcuts="Control+K Meta+K" onClick={() => setSessionSearchOpen(true)}>
             <Search size={16} />
-            <span>搜索</span>
-          </button>
-          <button type="button" onClick={() => openSettings("skills")}>
-            <Sparkles size={16} />
-            <span>技能</span>
+            <span>搜索对话</span><kbd>Ctrl K</kbd>
           </button>
         </div>
 
+        <Tabs class="conversation-navigation" value={conversationView()} onChange={selectConversationView}>
+          <Tabs.List class="conversation-view-tabs" aria-label="会话列表视图"><Tabs.Trigger value="projects">按项目</Tabs.Trigger><Tabs.Trigger value="recent">最近</Tabs.Trigger></Tabs.List>
+          <div class="proj-tree" onScroll={() => setProjectMenu(undefined)}>
         <div class="proj-tree-head">
-          <span>项目</span>
+          <span>{conversationView() === "projects" ? "项目" : "最近对话"}</span>
           <div class="proj-tree-tools">
             <button
               type="button"
@@ -3896,9 +3706,17 @@ function App() {
             </button>
           </div>
         </div>
-
-        <div class="proj-tree" onScroll={() => setProjectMenu(undefined)}>
-          <Show
+            <Tabs.Content value="recent"><Show when={recentSessions().length > 0}>
+            <div class="recent-sessions">
+              <For each={recentSessions()}>{(session) => (
+                <button class="recent-session" classList={{ active: session.isActive }} type="button" disabled={switchingSession()} title={`${session.title || "新对话"} · ${session.projectName}`} onClick={() => void handleSwitchSession(session.projectId, session.id)}>
+                  <span>{session.title || "新对话"}</span><small>{session.projectName}</small>
+                  <Show when={sessionTaskRuntimes()[sessionIdentityKey(session.projectId, session.id)]}><i class="sess-running-dot" aria-label="后台生成中" /></Show>
+                </button>
+              )}</For>
+            </div>
+          </Show><Show when={recentSessions().length === 0}><p class="sidebar-empty">暂无对话</p></Show></Tabs.Content>
+            <Tabs.Content value="projects"><Show
             when={projectTree().length > 0}
             fallback={<div class="sidebar-empty"><span>暂无项目</span><small>点右上角 + 添加项目</small></div>}
           >
@@ -3911,7 +3729,11 @@ function App() {
                       classList={{ active: project.isActive }}
                       type="button"
                       disabled={projectActionBusy()}
-                      onClick={() => void handleSwitchProject(project.id)}
+                      onClick={() => {
+                        setExpandedProjects((current) => ({ ...current, [project.id]: !current[project.id] }));
+                        void handleSwitchProject(project.id);
+                      }}
+                      aria-expanded={Boolean(expandedProjects()[project.id] || showArchived())}
                       title={project.workspaceRoot}
                     >
                       <Folder size={14} />
@@ -3933,6 +3755,7 @@ function App() {
                       <Ellipsis size={15} />
                     </button>
                   </div>
+                  <Show when={expandedProjects()[project.id] || showArchived()}>
                   <For each={project.sessions.filter((s) => showArchived() || !s.archived)}>
                     {(session) => (
                       <div
@@ -3982,11 +3805,13 @@ function App() {
                       </div>
                     )}
                   </For>
+                  </Show>
                 </div>
               )}
             </For>
-          </Show>
-        </div>
+          </Show></Tabs.Content>
+          </div>
+        </Tabs>
 
         <Show when={sessionMenu()}>
           {(menu) => (
@@ -4266,63 +4091,23 @@ function App() {
         </Show>
 
         <div class="sidebar-footer">
-          <div class="avatar">M</div>
-          <div>
-            <strong>本地用户</strong>
-            <small>{profile().label} · {profile().budget.cachePolicy}</small>
-          </div>
-          <button class="ghost-icon" type="button" title="设置" onClick={() => openDrawer("settings")}>
-            <Settings size={16} />
+          <Show when={!activeProviderConnection().ready || activeProviderConnection().failed}>
+          <button class="sidebar-connection" type="button" onClick={() => openSettings("models")} title={activeProviderConnection().label}>
+            <span class="connection-dot" classList={{ connected: activeProviderConnection().ok }} />
+            <span>{activeProviderConnection().failed ? "检查模型连接" : "连接模型"}</span>
+            <ChevronRight size={13} />
           </button>
+          </Show>
+          <button class="sidebar-workspace-settings" type="button" title="工作区设置" aria-label="工作区设置" onClick={() => openSettings("environment")}><FolderOpen size={15} /><span>工作区设置</span></button>
         </div>
       </aside>
 
-      <div
-        class="sidebar-resizer"
-        role="separator"
-        aria-label="调整侧栏宽度"
-        aria-orientation="vertical"
-        aria-valuemin={minSidebarWidth}
-        aria-valuemax={maxSidebarWidth}
-        aria-valuenow={Math.round(sidebarWidth())}
-        tabIndex={0}
-        title="拖拽调整宽度，双击恢复默认"
-        onPointerDown={startSidebarResize}
-        onPointerMove={moveSidebarResize}
-        onPointerUp={stopSidebarResize}
-        onPointerCancel={stopSidebarResize}
-        onMouseDown={startMouseSidebarResize}
-        onDblClick={resetSidebarWidth}
-        onKeyDown={(event) => {
-          if (event.key === "ArrowLeft") {
-            event.preventDefault();
-            nudgeSidebarWidth(-1);
-          }
-          if (event.key === "ArrowRight") {
-            event.preventDefault();
-            nudgeSidebarWidth(1);
-          }
-          if (event.key === "Home") {
-            event.preventDefault();
-            setSidebarWidth(minSidebarWidth);
-            applySidebarWidth(minSidebarWidth, shellRef);
-            persistSidebarWidth(minSidebarWidth);
-          }
-          if (event.key === "End") {
-            event.preventDefault();
-            setSidebarWidth(maxSidebarWidth);
-            applySidebarWidth(maxSidebarWidth, shellRef);
-            persistSidebarWidth(maxSidebarWidth);
-          }
-          if (event.key === "Enter") {
-            event.preventDefault();
-            resetSidebarWidth();
-          }
-        }}
-      />
+      <SidebarResizer control={sidebarResizeControl} hidden={drawerOpen() || sidebarCollapsed()} />
 
       <div
         class="workbench-main"
+        inert={drawerOpen()}
+        aria-hidden={drawerOpen()}
         classList={{
           "side-panel-open": !drawerOpen() && (Boolean(browserPreview()) || reviewOpen() || Boolean(selectedSubagent())),
           "browser-open": !drawerOpen() && sidePanelView() === "browser" && Boolean(browserPreview()),
@@ -4333,24 +4118,27 @@ function App() {
         ref={workbenchRef}
         style={{ "--browser-panel-width": `${Math.round(browserPanelWidth())}px` } as JSX.CSSProperties}
       >
-      <section class="chat-pane" classList={{ "workspace-tools-open": workspaceToolsOpen() }}>
+      <section class="chat-pane" classList={{ "workspace-tools-open": workspaceToolsOpen(), "is-empty": messages().length === 0 }}>
         <header class="chat-header">
-          <div>
+          <div class="chat-breadcrumb">
+            <Show when={runtimeSettings().workspaceRoot?.trim()}><span>{workspaceName()}</span><ChevronRight size={12} /></Show>
             <strong>{activeSessionTitle()}</strong>
-            <span>{modelName()}</span>
           </div>
           <div class="header-actions">
-            <button type="button" onClick={() => openDrawer("cache")}>
-              <ShieldCheck size={15} />
-              {formatPercent(cacheHitRate(), hasCacheTokens())}
-            </button>
+            <CacheUsage sessionKey={activeSessionKey()} session={deepSeekSession()} latest={usage()} onUsage={() => openSettings("usage")} onOpenChange={(open) => trackFloatingMenu("cache", open)} />
+            <ContextUsage sessionKey={activeSessionKey()} state={deepSeekSession()} disabled={currentSessionBusy() || switchingSession() || rewinding()} onOpenChange={(open) => trackFloatingMenu("context", open)} onUsage={() => openSettings("usage")} onCompress={async () => {
+              const projectID = activeProjectID(), sessionID = activeSessionID();
+              const result = await compressSessionContext(projectID, sessionID);
+              if (projectID === activeProjectID() && sessionID === activeSessionID() && result.projectId === projectID && result.sessionId === sessionID) setState(result.state);
+              return result.compressed ? `上下文已压缩：约 ${result.beforeTokens.toLocaleString()} → ${result.afterTokens.toLocaleString()} tokens` : "当前上下文已足够精简，无需再次压缩。";
+            }} />
             <Show when={backgroundTaskCount() > 0}>
               <span class="background-task-indicator" role="status" title={String(backgroundTaskCount()) + " 个会话正在后台生成"}>
                 <Bot size={14} />
                 {backgroundTaskCount()} 后台
               </span>
             </Show>
-            <button type="button" title="回退时间线" aria-label="回退时间线" onClick={() => void openTimeline()}>
+            <button ref={timelineTriggerRef} type="button" title="回退时间线" aria-label="回退时间线" aria-pressed={timelineOpen()} classList={{ active: timelineOpen() }} disabled={rewinding()} onClick={() => timelineOpen() ? setTimelineOpen(false) : void openTimeline()}>
               <History size={15} />
             </button>
             <button
@@ -4374,32 +4162,12 @@ function App() {
             <button type="button" title="内置浏览器" aria-label="内置浏览器" onClick={() => void handleOpenBrowser()}>
               <Globe2 size={15} />
             </button>
-            <button
-              class="theme-toggle"
-              type="button"
-              title={themeMode() === "dark" ? "切换浅色主题" : "切换暗色主题"}
-              aria-pressed={themeMode() === "light"}
-              onClick={toggleTheme}
-            >
-              <Show when={themeMode() === "dark"} fallback={<Moon size={15} />}>
-                <Sun size={15} />
-              </Show>
-            </button>
-            <button type="button" title="设置" aria-label="设置" onClick={() => openDrawer("settings")}>
-              <Settings size={15} />
-            </button>
           </div>
         </header>
 
         <div class="error-slot">
-          <Show when={error()}>
-            <div class="error-strip" role="alert">
-              <AlertTriangle size={16} />
-              <span>{error()}</span>
-              <button type="button" title="关闭错误提示" aria-label="关闭错误提示" onClick={() => setError("")}>
-                <X size={14} />
-              </button>
-            </div>
+          <Show when={error() || state()?.storageError}>
+            <InlineNotice class="workbench-notice" message={error() || state()?.storageError || ""} dismissLabel="关闭错误提示" onDismiss={error() ? () => setError("") : undefined} />
           </Show>
         </div>
 
@@ -4413,38 +4181,7 @@ function App() {
           <For
             each={renderedMessages()}
             fallback={
-              <div class="welcome-state">
-                <div class="welcome-brand">
-                  <span class="welcome-mark"><Command size={16} /></span>
-                  <span>EchoCode</span>
-                </div>
-                <div class="welcome-heading">
-                  <span>当前工作区</span>
-                  <h1>{runtimeSettings().workspaceRoot?.trim() ? workspaceName() : "今天处理什么？"}</h1>
-                  <Show when={runtimeSettings().workspaceRoot?.trim()}>
-                    {(root) => <p class="welcome-path" title={root()}><FolderOpen size={14} /><span>{root()}</span></p>}
-                  </Show>
-                </div>
-                <Show when={!runtimeSettings().workspaceRoot?.trim()}>
-                  <button class="welcome-add-project" type="button" onClick={() => void handleAddProject()}>
-                    <FolderOpen size={15} />添加项目
-                  </button>
-                </Show>
-                <div class="welcome-prompt-grid" aria-label="常用任务">
-                  <button class="welcome-prompt" type="button" onClick={() => primeWelcomePrompt("梳理当前项目的结构、关键模块和运行方式")}>
-                    <Search size={16} /><span>梳理当前项目</span><ArrowRight size={14} />
-                  </button>
-                  <button class="welcome-prompt" type="button" onClick={() => primeWelcomePrompt("检查当前工作区未提交的修改并指出风险")}>
-                    <GitBranch size={16} /><span>检查当前修改</span><ArrowRight size={14} />
-                  </button>
-                  <button class="welcome-prompt" type="button" onClick={() => primeWelcomePrompt("定位当前项目的问题并给出修复方案")}>
-                    <Wrench size={16} /><span>定位并修复问题</span><ArrowRight size={14} />
-                  </button>
-                  <button class="welcome-prompt" type="button" onClick={() => primeWelcomePrompt("为接下来的开发任务制定一份可执行计划")}>
-                    <ClipboardList size={16} /><span>制定实现计划</span><ArrowRight size={14} />
-                  </button>
-                </div>
-              </div>
+              <WorkbenchWelcome workspaceRoot={runtimeSettings().workspaceRoot ?? ""} workspaceName={workspaceName()} onAddProject={() => void handleAddProject()} onPrompt={primeWelcomePrompt} />
             }
           >
             {(message) => (
@@ -4505,27 +4242,31 @@ function App() {
 						</Show>
                       </div>
                     </Show>
-                    <Show when={!message.streaming && message.durationMs !== undefined && (message.content || message.parts?.length)}>
-                      <div class="op-message-runtime" title="本轮从提交到完成的总耗时">
-                        <Clock3 size={12} aria-hidden="true" />
-                        <span>已处理 {formatElapsedDuration(message.durationMs)}</span>
-                      </div>
-                    </Show>
-                    <Show when={message.role === "assistant" && !message.streaming && (message.content || message.parts?.length)}>
-                      <div class="op-message-actions assistant-actions">
-                        <button type="button" title="复制回复" aria-label="复制回复" onClick={() => void copyMessage(message)}>
-                          <Show when={copiedMessageID() === message.id} fallback={<Copy size={14} />}><Check size={14} /></Show>
-                        </button>
-                        <Show when={message.eventId}>
-                          <button
-                            type="button"
-                            title="从这条回复分叉"
-                            aria-label="从这条回复分叉"
-                            disabled={currentSessionBusy() || Boolean(forkingMessageID())}
-                            onClick={() => void handleForkMessage(message)}
-                          >
-                            <GitFork size={14} />
-                          </button>
+                    <Show when={!message.streaming && (message.content || message.parts?.length) && (message.durationMs !== undefined || message.role === "assistant")}>
+                      <div class="op-message-footer">
+                        <Show when={message.durationMs !== undefined}>
+                          <div class="op-message-runtime" title="本轮从提交到完成的总耗时">
+                            <Clock3 size={12} aria-hidden="true" />
+                            <span>已处理 {formatElapsedDuration(message.durationMs)}</span>
+                          </div>
+                        </Show>
+                        <Show when={message.role === "assistant"}>
+                          <div class="op-message-actions assistant-actions">
+                            <button type="button" title="复制回复" aria-label="复制回复" onClick={() => void copyMessage(message)}>
+                              <Show when={copiedMessageID() === message.id} fallback={<Copy size={14} />}><Check size={14} /></Show>
+                            </button>
+                            <Show when={message.eventId}>
+                              <button
+                                type="button"
+                                title="从这条回复分叉"
+                                aria-label="从这条回复分叉"
+                                disabled={currentSessionBusy() || Boolean(forkingMessageID())}
+                                onClick={() => void handleForkMessage(message)}
+                              >
+                                <GitFork size={14} />
+                              </button>
+                            </Show>
+                          </div>
                         </Show>
                       </div>
                     </Show>
@@ -4748,10 +4489,9 @@ function App() {
         <section class="composer-dock">
           <div class="composer-box">
             <div class="composer-project">
-              <Folder size={14} />
-              <button type="button" onClick={() => openSettings("index")}>
-                {workspaceName()}
-              </button>
+              <ProjectSwitcher projects={projectTree()} activeID={activeProjectID()} name={workspaceName()} busy={rewinding() || switchingSession() || resettingSession()} onSelect={id => void handleSwitchProject(id)} onAdd={() => void handleAddProject()} onOpenChange={open => trackFloatingMenu("project-switcher", open)} />
+              <span class="composer-environment"><Monitor size={12} />本地</span>
+              <span class="composer-permission"><ShieldCheck size={11} />{permissionLabel(runtimeSettings())}</span>
             </div>
             <Show when={composerAttachments().length > 0}>
               <div class="composer-attachments">
@@ -4881,69 +4621,27 @@ function App() {
                   multiple
                   onChange={(event) => void addComposerMarkdown(Array.from(event.currentTarget.files ?? []))}
                 />
-                <button type="button" title="添加图片" aria-label="添加图片" disabled={addingImages() || composerAttachments().filter(isImageChatAttachment).length >= 4} onClick={() => composerImageInputRef?.click()}>
-                  <ImagePlus size={17} />
-                </button>
-                <button
-                  type="button"
-                  title="添加 Markdown 参考资料"
-                  aria-label="添加 Markdown 参考资料"
-                  disabled={addingDocuments() || composerAttachments().filter(isMarkdownChatAttachment).length >= 5}
-                  onClick={() => composerMarkdownInputRef?.click()}
-                >
-                  <FileText size={17} />
-                </button>
-                <button
-                  type="button"
-                  title="撤销输入 (Ctrl+Z)"
-                  aria-label="撤销输入"
-                  disabled={composerUndoDepth() === 0}
-                  onClick={undoComposerInput}
-                >
-                  <Undo2 size={16} />
-                </button>
-                <button
-                  type="button"
-                  title="重做输入 (Ctrl+Y)"
-                  aria-label="重做输入"
-                  disabled={composerRedoDepth() === 0}
-                  onClick={redoComposerInput}
-                >
-                  <Redo2 size={16} />
-                </button>
-                <button
-                  type="button"
-                  class="access-toggle"
-                  classList={{ active: fullAccess() }}
-                  disabled={currentSessionBusy()}
-                  title={fullAccess() ? "完全访问已开启：命令/文件修改不再逐次确认" : "点击开启完全访问（不再弹审批框）"}
-                  onClick={() => void toggleFullAccess()}
-                >
-                  <ShieldCheck size={15} />
-                  {fullAccess() ? "完全访问：开" : "完全访问"}
-                </button>
-                <button
-                  type="button"
-                  class="plan-toggle"
-                  classList={{ active: planMode() }}
-                  disabled={currentSessionBusy()}
-                  title="Plan 模式：先规划后执行（需高/超高推理强度）"
-                  onClick={() => void togglePlanMode()}
-                >
-                  <ClipboardList size={15} />
-                  {planMode() ? "计划模式：开" : "计划模式"}
-                </button>
-                <button
-                  type="button"
-                  class="team-toggle"
-                  classList={{ active: teamMode() }}
-                  disabled={currentSessionBusy()}
-                  title="AI 团队：规划、实现、测试、审阅和汇总使用可独立配置的模型"
-                  onClick={() => void toggleTeamMode()}
-                >
-                  <Users size={15} />
-                  {teamMode() ? "团队：开" : "AI 团队"}
-                </button>
+                <ComposerActions
+                  imagesDisabled={addingImages() || composerAttachments().filter(isImageChatAttachment).length >= 4}
+                  documentsDisabled={addingDocuments() || composerAttachments().filter(isMarkdownChatAttachment).length >= 5}
+                  canUndo={composerUndoDepth() > 0}
+                  canRedo={composerRedoDepth() > 0}
+                  busy={currentSessionBusy()}
+                  plan={planMode()}
+                  team={teamMode()}
+                  permission={currentPermission()}
+                  permissionsBusy={anySessionBusy() || savingRuntime() || switchingSession()}
+                  isolatedCommands={Boolean(state()?.sandboxCapabilities.filesystemIsolation && state()?.sandboxCapabilities.networkIsolation)}
+                  onImages={() => composerImageInputRef?.click()}
+                  onDocuments={() => composerMarkdownInputRef?.click()}
+                  onUndo={undoComposerInput}
+                  onRedo={redoComposerInput}
+                  onPlan={() => void togglePlanMode()}
+                  onTeam={() => void toggleTeamMode()}
+                  onPermission={(preset) => void selectPermissionPreset(preset)}
+                  onPermissionSettings={() => openSettings("config")}
+                  onOpenChange={trackFloatingMenu}
+                />
               </div>
               <div class="composer-send-controls">
                 <ModelRouteMenu
@@ -4951,12 +4649,14 @@ function App() {
                   saving={savingRuntime() || currentSessionBusy()}
                   onManage={() => openSettings("models")}
                   onSelect={(providerID, modelID) => void selectModelRoute(providerID, modelID)}
+                  onOpenChange={(open) => trackFloatingMenu("model", open)}
                 />
                 <ReasoningMenu
                   value={pendingReasoningLevel() ?? profile().id}
                   options={options()}
                   running={updatingReasoning() || (currentSessionBusy() && pendingReasoningLevel() !== undefined)}
                   onChange={changeReasoning}
+                  onOpenChange={(open) => trackFloatingMenu("reasoning", open)}
                 />
                 <Show when={currentSessionBusy()}>
                   <button
@@ -5061,34 +4761,24 @@ function App() {
       </div>
 
       <Show when={drawerOpen()}>
-        <aside class="settings-screen" aria-label="EchoCode 设置">
-          <div class="drawer-head">
-            <button class="settings-back" type="button" onClick={closeDrawer}>
-              <ArrowLeft size={16} />
-              <span>返回工作区</span>
-            </button>
-            <strong>EchoCode 设置</strong>
-            <button class="ghost-icon" type="button" title="关闭设置" onClick={closeDrawer}>
-              <X size={16} />
-            </button>
-          </div>
+        <aside class="settings-screen" aria-label={activeSection() === "extensions" ? "EchoCode 扩展" : activeSection() === "automation" ? "EchoCode 自动化" : "EchoCode 设置"}>
+          <Suspense fallback={<div class="settings-loading" role="status">正在打开设置…</div>}>
           <SettingsCenter
+            sidebarCollapsed={sidebarCollapsed()}
+            section={activeSection()}
             activeCategory={activeSettingsCategory()}
+            error={error() || state()?.storageError}
+            dismissError={() => setError("")}
 			applyWorkbenchState={setState}
-            apiKeyDraft={apiKeyDraft()}
             cacheHealth={cacheHealth()}
             cacheHitRate={cacheHitRate()}
             cacheTarget={cacheTarget()}
-            clearingKey={clearingKey()}
-            clearKey={clearKey}
             contextPreview={contextPreview()}
-            deepSeek={deepSeek()}
             deepSeekSession={deepSeekSession()}
             diagnostics={diagnostics()}
             hasCacheTokens={hasCacheTokens()}
             mcpServers={mcpServers()}
-            models={deepSeek().models}
-            nudgeSidebarWidth={nudgeSidebarWidth}
+            sidebarResizeControl={sidebarResizeControl}
             profile={profile()}
             projectMemory={state()?.projectMemory ?? {
               enabled: true,
@@ -5130,7 +4820,6 @@ function App() {
 			clearProviderKey={clearProviderKey}
 			clearProviderBillingKey={clearProviderBillingKey}
             deleteProvider={removeModelProvider}
-			saveKey={saveKey}
 			saveProviderKey={saveProviderKey}
 			saveProviderBillingKey={saveProviderBillingKey}
             saveRuntime={saveRuntime}
@@ -5139,16 +4828,11 @@ function App() {
             deletingProviderID={deletingProviderID()}
 			savingProviderID={savingProviderID()}
 			savingProviderBillingID={savingProviderBillingID()}
-            savingKey={savingKey()}
             savingRuntime={savingRuntime()}
-            selectCategory={setActiveSettingsCategory}
+            selectCategory={openSettings}
             sessionHasCacheTokens={sessionHasCacheTokens()}
-            setAPIKeyDraft={setAPIKeyDraft}
-            sidebarWidth={sidebarWidth()}
             skills={skillsIndex()}
             snapshots={snapshots()}
-            testConnection={testConnection}
-            testingDeepSeek={testingDeepSeek()}
 			setProviderKeyDraft={setProviderKeyDraft}
 			setProviderBillingKeyDraft={setProviderBillingKeyDraft}
             syncProviderModels={syncProviderModels}
@@ -5159,7 +4843,6 @@ function App() {
             updateRuntimeDraft={updateRuntimeDraft}
             updatingReasoning={updatingReasoning()}
             resetRuntimeDraft={resetRuntimeDraft}
-            resetSidebarWidth={resetSidebarWidth}
 			usage={usage()}
 			usageLedger={state()?.usageLedger}
 			usageBillingReports={usageBillingReports()}
@@ -5168,19 +4851,28 @@ function App() {
 			reconcileUsageBilling={reconcileUsageBillingReport}
             confirmAction={confirmAction}
           />
+          </Suspense>
         </aside>
       </Show>
 
-      <Show when={timelineOpen()}>
         <TimelinePanel
+          open={timelineOpen()}
+          mount={shellRef}
+          sessionTitle={activeSessionTitle()}
+          available={timelineAvailable()}
+          loading={timelineLoading()}
+          error={timelineError()}
+          notice={timelineNotice()}
           checkpoints={checkpoints()}
           branches={branches()}
           onRewind={handleRewind}
           onSwitchBranch={handleSwitchBranch}
+          onRefresh={refreshCheckpoints}
           onClose={() => setTimelineOpen(false)}
+          onRestoreFocus={() => { if (!drawerOpen()) timelineTriggerRef?.focus(); }}
           busy={rewinding()}
+          taskRunning={currentSessionBusy()}
         />
-      </Show>
 
       <Show when={activeApproval()}>
         {(req) => <ApprovalModal request={req()} busy={approvalBusy()} onDecide={decideApproval} />}

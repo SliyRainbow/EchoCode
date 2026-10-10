@@ -107,7 +107,7 @@ func TestResponsesCompleteSendsAgentRequestContext(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
-		if request.ToolChoice != "auto" || request.ParallelToolCalls || request.Store {
+		if request.ToolChoice != "auto" || request.ParallelToolCalls == nil || *request.ParallelToolCalls || request.Store {
 			t.Errorf("request controls = %#v", request)
 		}
 		if !reflect.DeepEqual(request.Include, []string{"reasoning.encrypted_content"}) {
@@ -123,13 +123,13 @@ func TestResponsesCompleteSendsAgentRequestContext(t *testing.T) {
 			"turn_id":                        "turn-42",
 			responsesWindowMetadataKey:       "project:session:0",
 		} {
-			if got := request.ClientMetadata[key]; got != want {
-				t.Errorf("client_metadata[%s] = %q, want %q", key, got, want)
+			if got := request.Metadata[key]; got != want {
+				t.Errorf("metadata[%s] = %q, want %q", key, got, want)
 			}
 		}
-		turnMetadata := request.ClientMetadata[responsesTurnMetadataKey]
-		if turnMetadata == "" || turnMetadata != r.Header.Get(responsesTurnMetadataKey) {
-			t.Fatalf("turn metadata body/header mismatch: body=%q header=%q", turnMetadata, r.Header.Get(responsesTurnMetadataKey))
+		turnMetadata := r.Header.Get(responsesTurnMetadataKey)
+		if turnMetadata == "" || request.Metadata[responsesTurnMetadataKey] != "" {
+			t.Fatalf("large internal context must stay out of public metadata: %#v", request.Metadata)
 		}
 		for _, value := range []byte(turnMetadata) {
 			if value > 0x7f {
@@ -164,7 +164,7 @@ func TestResponsesCompleteSendsAgentRequestContext(t *testing.T) {
 		if !ok || workspaces[`C:\工作区`] == nil {
 			t.Errorf("workspaces = %#v", snapshot["workspaces"])
 		}
-		if _, exists := request.ClientMetadata["client_name"]; exists {
+		if _, exists := request.Metadata["client_name"]; exists {
 			t.Error("custom metadata must be nested in the canonical turn snapshot")
 		}
 		w.Header().Set("Content-Type", "application/json")

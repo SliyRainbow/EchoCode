@@ -1,3 +1,5 @@
+import { PanelTab } from "./ui/PanelTab";
+import { Tabs } from "@kobalte/core/tabs";
 import { ChevronLeft, ChevronRight, FileSpreadsheet, FileText, Presentation } from "lucide-solid";
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal } from "solid-js";
 import type { JSX } from "solid-js";
@@ -65,19 +67,19 @@ function SpreadsheetArtifact(props: { spreadsheet: NonNullable<OfficeArtifactPre
   const activeSheet = createMemo(() => props.spreadsheet.sheets.find((sheet) => sheet.name === activeName()) ?? props.spreadsheet.sheets[0]);
   const visibleColumns = createMemo(() => Math.max(1, ...((activeSheet()?.rows ?? []).map((row) => row.length))));
   return (
-    <div class="artifact-viewer spreadsheet-artifact">
-      <div class="artifact-sheet-tabs" role="tablist" aria-label="工作表">
+    <Tabs class="artifact-viewer spreadsheet-artifact" value={activeSheet()?.name ?? ""} onChange={setActiveName}>
+      <Tabs.List class="artifact-sheet-tabs panel-tabs" aria-label="工作表">
         <For each={props.spreadsheet.sheets} fallback={<span class="artifact-empty-inline"><FileSpreadsheet size={14} />没有工作表</span>}>
           {(sheet) => (
-            <button type="button" role="tab" classList={{ active: activeSheet()?.name === sheet.name }} aria-selected={activeSheet()?.name === sheet.name} onClick={() => setActiveName(sheet.name)}>
+            <PanelTab value={sheet.name}>
               {sheet.name}
-            </button>
+            </PanelTab>
           )}
         </For>
-      </div>
+      </Tabs.List>
       <Show when={activeSheet()} fallback={<ArtifactEmpty icon={<FileSpreadsheet size={23} />} label="工作簿没有可显示的数据" />}>
         {(sheet) => (
-          <>
+          <Tabs.Content value={sheet().name} class="artifact-sheet-panel">
             <div class="artifact-sheet-meta">{sheet().rowCount} 行 × {sheet().columnCount} 列</div>
             <div class="artifact-grid-scroll">
               <table class="artifact-grid">
@@ -92,10 +94,10 @@ function SpreadsheetArtifact(props: { spreadsheet: NonNullable<OfficeArtifactPre
               </table>
             </div>
             <Show when={sheet().truncated || props.spreadsheet.truncated}><div class="artifact-truncated-note">工作簿较大，侧栏显示已限制行列</div></Show>
-          </>
+          </Tabs.Content>
         )}
       </Show>
-    </div>
+    </Tabs>
   );
 }
 

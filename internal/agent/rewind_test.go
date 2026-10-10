@@ -12,6 +12,43 @@ import (
 
 const legacySearchFailureMessage = "网络搜索已完成，但上游模型在整理结果时连接失败。搜索来源已经保留，请展开搜索记录查看；也可以直接重试本条消息。"
 
+func TestSessionReasoningSurvivesHistoryAndRestart(t *testing.T) {
+	for _, status := range []string{"completed", "failed", "cancelled"} {
+		t.Run(status, func(t *testing.T) {
+			config := ServiceConfig{SkillsDir: t.TempDir(), SessionsDir: t.TempDir()}
+			service := NewService(config)
+			trace := "first provider step\n\nsecond provider step"
+			if status == "completed" {
+				service.recordAssistantWithReasoning("answer", trace, "test-model", nil, 50)
+			} else if err := service.recordTurnTerminal(status, "partial answer", "test-model", nil, 50, trace); err != nil {
+				t.Fatal(err)
+			}
+			history := service.GetSessionMessages()
+			if len(history) != 1 || history[0].Reasoning != trace || strings.Contains(history[0].Content, trace) {
+				t.Fatalf("reasoning was lost or mixed into the answer: %#v", history)
+			}
+			service.Close()
+			restored := NewService(config)
+			defer restored.Close()
+			history = restored.GetSessionMessages()
+			if len(history) != 1 || history[0].Reasoning != trace {
+				t.Fatalf("reasoning was lost on restart: %#v", history)
+			}
+		})
+	}
+}
+
+func TestSessionReasoningIsRedactedBeforePersistence(t *testing.T) {
+	service := NewService(ServiceConfig{SkillsDir: t.TempDir(), SessionsDir: t.TempDir()})
+	defer service.Close()
+	trace := "密码：temporary-password-value"
+	service.recordAssistantWithReasoning("done", trace, "test-model", nil)
+	history := service.GetSessionMessages()
+	if len(history) != 1 || history[0].Reasoning == trace || history[0].Reasoning != redactSensitiveText(trace) {
+		t.Fatalf("expected redacted reasoning: %#v", history)
+	}
+}
+
 func TestSessionMessagesRestoreTimingAndToolMetadata(t *testing.T) {
 	svc := NewService(ServiceConfig{SkillsDir: t.TempDir(), SessionsDir: t.TempDir()})
 	exitCode := 0

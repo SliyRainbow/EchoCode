@@ -68,7 +68,10 @@ func (a *App) InstallExtension(id string) (ExtensionOperationResult, error) {
 	if id == "" {
 		return ExtensionOperationResult{}, errors.New("扩展 ID 不能为空")
 	}
-	_, hadPrevious := a.extensions.Installed(id)
+	_, hadPrevious, lookupErr := a.extensions.LookupInstalled(id)
+	if lookupErr != nil {
+		return ExtensionOperationResult{}, lookupErr
+	}
 	settings := a.runtimeSettingsSnapshot()
 	if !hadPrevious {
 		if conflict, ok := findMCPServerSetting(settings.MCP.Servers, id); ok && strings.TrimSpace(conflict.Command) != "" {
@@ -78,25 +81,28 @@ func (a *App) InstallExtension(id string) (ExtensionOperationResult, error) {
 
 	ctx, cancel := context.WithTimeout(appContext(a.ctx), extensionOperationTimeout)
 	defer cancel()
-	result, err := a.extensions.Install(ctx, id)
-	if err != nil {
-		return ExtensionOperationResult{}, err
-	}
 	state := a.service.WorkbenchState()
-	if result.Manifest.Type == "mcp" && result.Manifest.MCP != nil {
+	_, err := a.extensions.InstallAndActivate(ctx, id, func(result extensions.InstallResult) error {
+		if result.Manifest.Type != "mcp" || result.Manifest.MCP == nil {
+			return nil
+		}
+		// Download can take minutes. Merge into current settings rather than
+		// overwriting edits or the selected workspace from the old snapshot.
+		settings := a.runtimeSettingsSnapshot()
 		next, settingErr := extensionMCPServerSetting(result, settings.WorkspaceRoot)
 		if settingErr != nil {
-			return ExtensionOperationResult{}, settingErr
+			return settingErr
 		}
 		settings.MCP.Servers = upsertExtensionMCPServer(settings.MCP.Servers, next)
 		var saveErr error
-		state, saveErr = a.SaveRuntimeSettings(settings)
+		state, saveErr = a.saveExtensionMCPSettings(settings)
 		if saveErr != nil {
-			if !hadPrevious {
-				_ = a.extensions.Uninstall(id)
-			}
-			return ExtensionOperationResult{}, fmt.Errorf("扩展已下载，但 MCP 配置保存失败: %w", saveErr)
+			return fmt.Errorf("MCP 配置保存失败，扩展安装已取消: %w", saveErr)
 		}
+		return nil
+	})
+	if err != nil {
+		return ExtensionOperationResult{}, err
 	}
 	catalog, err := a.extensions.Catalog(context.Background(), false)
 	return ExtensionOperationResult{Catalog: catalog, State: state}, err
@@ -107,22 +113,37 @@ func (a *App) UninstallExtension(id string) (ExtensionOperationResult, error) {
 		return ExtensionOperationResult{}, errors.New("扩展服务不可用")
 	}
 	id = strings.TrimSpace(id)
-	installed, ok := a.extensions.Installed(id)
+	installed, ok, lookupErr := a.extensions.LookupInstalled(id)
+	if lookupErr != nil {
+		return ExtensionOperationResult{}, lookupErr
+	}
 	if !ok {
 		catalog, err := a.extensions.Catalog(context.Background(), false)
 		return ExtensionOperationResult{Catalog: catalog, State: a.service.WorkbenchState()}, err
 	}
 	settings := a.runtimeSettingsSnapshot()
+	originalSettings := settings
 	state := a.service.WorkbenchState()
 	if installed.Type == "mcp" {
 		settings.MCP.Servers = removeOwnedExtensionMCPServer(settings.MCP.Servers, installed)
 		var err error
-		state, err = a.SaveRuntimeSettings(settings)
+		state, err = a.saveExtensionMCPSettings(settings)
 		if err != nil {
 			return ExtensionOperationResult{}, fmt.Errorf("移除 MCP 配置失败: %w", err)
 		}
 	}
 	if err := a.extensions.Uninstall(id); err != nil {
+		if installed.Type == "mcp" {
+			// The extension service restores its files on failure. Restore only
+			// this MCP entry, keeping any unrelated settings changed meanwhile.
+			if original, ok := findMCPServerSetting(originalSettings.MCP.Servers, id); ok {
+				settings := a.runtimeSettingsSnapshot()
+				settings.MCP.Servers = upsertExtensionMCPServer(settings.MCP.Servers, original)
+				if _, restoreErr := a.saveExtensionMCPSettings(settings); restoreErr != nil {
+					return ExtensionOperationResult{}, errors.Join(err, fmt.Errorf("恢复 MCP 配置失败: %w", restoreErr))
+				}
+			}
+		}
 		return ExtensionOperationResult{}, err
 	}
 	catalog, err := a.extensions.Catalog(context.Background(), false)
@@ -138,6 +159,19 @@ func (a *App) RevealExtension(id string) error {
 		return fmt.Errorf("扩展尚未安装：%s", id)
 	}
 	return openDesktopFile(installed.InstallDir)
+}
+
+// Extension transactions only change MCP configuration. Do not run unrelated
+// browser reconfiguration or data-clearing actions after this durable commit.
+func (a *App) saveExtensionMCPSettings(settings agent.RuntimeSettings) (agent.WorkbenchState, error) {
+	state, err := a.service.SaveRuntimeSettings(settings)
+	if err != nil {
+		return state, err
+	}
+	a.setRuntimeSettings(state.RuntimeSettings)
+	ctx, cancel := context.WithTimeout(appContext(a.ctx), 20*time.Second)
+	defer cancel()
+	return a.service.ConfigureMCP(ctx, ""), nil
 }
 
 func (a *App) RunExtensionProjectAction(id, actionID string) (extensions.ActionResult, error) {

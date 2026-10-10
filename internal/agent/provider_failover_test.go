@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"testing"
@@ -9,6 +10,72 @@ import (
 
 	"github.com/SliyRainbow/EchoCode/internal/protocol"
 )
+
+func TestFailoverScopesReasoningWithoutLosingToolHistory(t *testing.T) {
+	first := chatRoute{Provider: ModelProviderSetting{ID: "first", BaseURL: "https://one.example/v1", Protocol: "openai-compatible"}, ModelID: "model", APIKey: "first-test-key"}
+	second := chatRoute{Provider: ModelProviderSetting{ID: "second", BaseURL: "https://two.example/v1", Protocol: "openai-compatible"}, ModelID: "model", APIKey: "second-test-key"}
+	continuation := scopedContinuation(first, &protocol.ProviderContinuation{Protocol: "openai-responses", Data: json.RawMessage(`[]`)})
+	messages := []protocol.Message{{Role: "assistant", Content: "public text", ReasoningContent: "first route reasoning", Continuation: continuation, ToolCalls: []protocol.ToolCall{{ID: "call-1", Function: protocol.ToolCallFunction{Name: "read_file", Arguments: json.RawMessage(`{}`)}}}}, {Role: "tool", ToolCallID: "call-1", Content: "public tool result"}}
+	forwarded := routeContinuationMessages(messages, second, 1)
+	if forwarded[0].Continuation != nil || forwarded[0].ReasoningContent != "" || forwarded[0].Content != "public text" || forwarded[0].ToolCalls[0].ID != "call-1" || forwarded[1].ToolCallID != "call-1" {
+		t.Fatalf("cross-route messages = %#v", forwarded)
+	}
+	if messages[0].Continuation == nil || messages[0].ReasoningContent == "" {
+		t.Fatal("source history mutated")
+	}
+	forwarded[0].Continuation = scopedContinuation(second, &protocol.ProviderContinuation{Protocol: "openai-responses", Data: json.RawMessage(`[]`)})
+	forwarded[0].ReasoningContent = "second route reasoning"
+	next := routeContinuationMessages(forwarded, second, 1)
+	if next[0].Continuation == nil || next[0].ReasoningContent != "second route reasoning" {
+		t.Fatal("fallback route lost its own continuation")
+	}
+	rotated := second
+	rotated.APIKey = "rotated-test-key"
+	if routeContinuationMessages(forwarded, rotated, 1)[0].Continuation != nil {
+		t.Fatal("credential change reused private continuation")
+	}
+}
+
+func TestFailoverKeepsPartialCompletionOnFailure(t *testing.T) {
+	provider := &failoverProvider{candidates: []routedProvider{{route: chatRoute{Provider: ModelProviderSetting{ID: "first"}}, provider: failoverProviderStub{complete: func(protocol.ChatRequest) (protocol.CompletionResult, error) {
+		return protocol.CompletionResult{Content: "partial output", Reasoning: "summary"}, io.ErrUnexpectedEOF
+	}}}}}
+	result, err := provider.Complete(context.Background(), protocol.ChatRequest{})
+	if err == nil || result.Content != "partial output" || result.Reasoning != "summary" {
+		t.Fatalf("partial completion discarded: %#v, %v", result, err)
+	}
+}
+
+func TestFailoverDoesNotMixReasoningAcrossProviders(t *testing.T) {
+	first := make(chan protocol.StreamEvent, 2)
+	first <- protocol.StreamEvent{Type: "reasoning", Delta: "first reasoning"}
+	first <- protocol.StreamEvent{Type: "error", Error: "unexpected EOF"}
+	close(first)
+	called := false
+	provider := &failoverProvider{candidates: []routedProvider{
+		{route: chatRoute{Provider: ModelProviderSetting{ID: "first"}}, provider: failoverProviderStub{stream: func(protocol.ChatRequest) (<-chan protocol.StreamEvent, error) { return first, nil }}},
+		{route: chatRoute{Provider: ModelProviderSetting{ID: "second"}}, provider: failoverProviderStub{stream: func(protocol.ChatRequest) (<-chan protocol.StreamEvent, error) {
+			called = true
+			return nil, errors.New("unexpected fallback")
+		}}},
+	}}
+	events, err := provider.Stream(context.Background(), protocol.ChatRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed, reasoning := false, ""
+	for event := range events {
+		if event.Type == "error" {
+			failed = true
+		}
+		if event.Type == "reasoning" {
+			reasoning += event.Delta
+		}
+	}
+	if called || !failed || reasoning != "first reasoning" {
+		t.Fatal("failover mixed a partial reasoning stream")
+	}
+}
 
 type failoverProviderStub struct {
 	name     string

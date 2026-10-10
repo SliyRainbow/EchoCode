@@ -388,7 +388,9 @@ func (t DelegateTaskTool) Execute(ctx context.Context, rawArgs json.RawMessage) 
 	}
 
 	for index, spec := range specs {
-		go func(index int, spec delegateTaskSpec) {
+		// The caller owns the returned Parts and may trim or annotate them as
+		// soon as Execute returns. Workers must not read that shared slice.
+		go func(index int, spec delegateTaskSpec, initial tools.ResultPart) {
 			control := controls[index]
 			emit := func(part tools.ResultPart) {
 				part = cloneSubagentPart(part)
@@ -397,11 +399,11 @@ func (t DelegateTaskTool) Execute(ctx context.Context, rawArgs json.RawMessage) 
 				}
 				emitProgress(part)
 			}
-			result := t.Service.runDelegatedTask(workerContexts[index], scope, spec, parts[index], emit)
+			result := t.Service.runDelegatedTask(workerContexts[index], scope, spec, initial, emit)
 			if control.finish(result) {
 				_ = t.Service.persistSubagentControl(control)
 			}
-		}(index, spec)
+		}(index, spec, cloneSubagentPart(parts[index]))
 	}
 	return tools.Result{
 		Summary: delegatedTaskStartSummary(parts),

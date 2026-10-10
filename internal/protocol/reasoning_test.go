@@ -10,6 +10,10 @@ func TestResolveReasoningOptionsUsesModelSpecificOpenAIMaximum(t *testing.T) {
 		model string
 		want  string
 	}{
+		{model: "gpt-6-astra", want: "max"},
+		{model: "gpt-6.1-sol", want: "max"},
+		{model: "gpt-6-sol", want: "max"},
+		{model: "gpt-6-luna", want: "max"},
 		{model: "gpt-5.6", want: "max"},
 		{model: "gpt-5.5", want: "xhigh"},
 		{model: "gpt-5.4", want: "xhigh"},

@@ -148,17 +148,20 @@ type Attachment struct {
 
 // FileChange 描述一次文件修改的前后内容（LF/UTF-8 归一化文本），用于快照与回退。
 type FileChange struct {
-	Path            string `json:"path"`
-	Before          string `json:"before"`            // 改动前内容（新建文件为空）
-	After           string `json:"after"`             // 改动后内容
-	Existed         bool   `json:"existed"`           // 改动前文件是否存在
-	Deleted         bool   `json:"deleted,omitempty"` // 改动后文件是否不存在
-	LineEnding      string `json:"lineEnding"`        // 原文件行尾风格
-	Encoding        string `json:"encoding,omitempty"`
-	HadBOM          bool   `json:"hadBom"` // 原文件是否带 BOM
-	AfterLineEnding string `json:"afterLineEnding,omitempty"`
-	AfterEncoding   string `json:"afterEncoding,omitempty"`
-	AfterHadBOM     bool   `json:"afterHadBom,omitempty"`
+	// Host-only grant for recovering this exact external file. Tool/plugin JSON
+	// cannot claim an approval; only the Agent approval broker sets this field.
+	ApprovedExternalPath string `json:"-"`
+	Path                 string `json:"path"`
+	Before               string `json:"before"`            // 改动前内容（新建文件为空）
+	After                string `json:"after"`             // 改动后内容
+	Existed              bool   `json:"existed"`           // 改动前文件是否存在
+	Deleted              bool   `json:"deleted,omitempty"` // 改动后文件是否不存在
+	LineEnding           string `json:"lineEnding"`        // 原文件行尾风格
+	Encoding             string `json:"encoding,omitempty"`
+	HadBOM               bool   `json:"hadBom"` // 原文件是否带 BOM
+	AfterLineEnding      string `json:"afterLineEnding,omitempty"`
+	AfterEncoding        string `json:"afterEncoding,omitempty"`
+	AfterHadBOM          bool   `json:"afterHadBom,omitempty"`
 }
 
 // Tool 是一个可被模型调用的工具。
@@ -236,7 +239,7 @@ func (r *Registry) Schemas() []ToolSchema {
 			Function: ToolSchemaDetail{
 				Name:        t.Name(),
 				Description: t.Description(),
-				Parameters:  t.InputSchema(),
+				Parameters:  exportInputSchema(t.InputSchema()),
 			},
 		})
 	}

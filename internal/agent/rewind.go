@@ -3,6 +3,7 @@ package agent
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,11 +24,16 @@ func (s *Service) initEventStore() {
 	}
 	// 初始化项目清单（多项目/多会话元数据）。
 	if s.config.ProjectsPath != "" {
-		if store, err := project.Open(s.config.ProjectsPath); err == nil {
+		store, err := project.Open(s.config.ProjectsPath)
+		if err == nil {
 			s.projects = store
-			_, _ = s.projects.EnsureBootstrap(s.runtimeSettings.WorkspaceRoot, defaultProjectName(s.runtimeSettings.WorkspaceRoot))
-			s.pruneGeneratedBootstrapProjects()
+			_, err = s.projects.EnsureBootstrap(s.runtimeSettings.WorkspaceRoot, defaultProjectName(s.runtimeSettings.WorkspaceRoot))
 		}
+		if err != nil {
+			s.initializationError = errors.Join(s.initializationError, fmt.Errorf("读取项目清单失败，原文件已保留，请修复后重启: %w", err))
+			return
+		}
+		s.pruneGeneratedBootstrapProjects()
 	}
 	// 打开活动会话的事件日志。
 	s.openActiveSession()
@@ -61,6 +67,7 @@ func (s *Service) pruneGeneratedBootstrapProjects() {
 // openActiveSession 依据项目清单的活动指针打开对应事件日志目录。
 // 无项目清单时回退单会话 "default"（向后兼容）。
 func (s *Service) openActiveSession() {
+	s.sessionLoadError = nil
 	projectID, sessionID := "default", "default"
 	if s.projects != nil {
 		pid, sid := s.projects.ActiveIDs()
@@ -75,13 +82,26 @@ func (s *Service) openActiveSession() {
 	}
 	s.sessionID = sessionID
 	s.projectID = projectID
-	dir := filepath.Join(s.config.SessionsDir, projectID, sessionID)
-	store, err := eventlog.Open(dir)
+	dir, err := safeSessionEventDir(s.config.SessionsDir, projectID, sessionID)
 	if err != nil {
+		s.sessionLoadError = err
 		s.eventStore = nil
 		return
 	}
+	store, err := eventlog.Open(dir)
+	if err != nil {
+		s.eventStore = nil
+		s.sessionLoadError = fmt.Errorf("读取会话记录失败，原文件已保留，请检查 %s: %w", dir, err)
+		return
+	}
 	s.eventStore = store
+}
+
+func storageErrorMessage(causes ...error) string {
+	if err := errors.Join(causes...); err != nil {
+		return err.Error()
+	}
+	return ""
 }
 
 func defaultProjectName(workspaceRoot string) string {
@@ -99,23 +119,28 @@ type CheckpointInfo struct {
 	TurnIndex int    `json:"turnIndex"`
 	Timestamp string `json:"timestamp"`
 	Preview   string `json:"preview"`
+	IsCurrent bool   `json:"isCurrent"`
 }
 
 // recordUserEvent 记录一条用户消息事件。
-func (s *Service) recordUserEvent(content string) {
-	s.recordUserEventWithAttachments(content, nil)
+func (s *Service) recordUserEvent(content string) error {
+	return s.recordUserEventWithAttachments(content, nil)
 }
 
-func (s *Service) recordUserEventWithAttachments(content string, attachments []ChatAttachment) {
+func (s *Service) recordUserEventWithAttachments(content string, attachments []ChatAttachment) error {
 	if s.eventStore == nil {
-		return
+		return nil
 	}
-	_, _ = s.appendEvent(eventlog.EventPayload{
+	_, err := s.appendEvent(eventlog.EventPayload{
 		Role: "user", Content: redactSensitiveText(content), Attachments: toEventAttachments(attachments),
 	}, eventlog.EventUserMessage)
+	if err != nil {
+		return fmt.Errorf("保存用户消息失败: %w", err)
+	}
+	return nil
 }
 
-func (s *Service) recordTurnTerminal(status, content, model string, parts []tools.ResultPart, durationMs int64) error {
+func (s *Service) recordTurnTerminal(status, content, model string, parts []tools.ResultPart, durationMs int64, reasoning ...string) error {
 	if s.eventStore == nil {
 		return nil
 	}
@@ -123,9 +148,14 @@ func (s *Service) recordTurnTerminal(status, content, model string, parts []tool
 		return fmt.Errorf("记录任务终态产物失败: %w", err)
 	}
 	parts = s.mergeTurnTimelineParts(parts, content, status)
+	var reasoningText string
+	if len(reasoning) > 0 {
+		reasoningText = redactSensitiveText(reasoning[0])
+	}
 	_, err := s.appendEvent(eventlog.EventPayload{
 		Role:         "assistant",
 		Content:      redactSensitiveText(content),
+		Reasoning:    reasoningText,
 		Model:        model,
 		DurationMs:   durationMs,
 		Parts:        toEventParts(parts),
@@ -166,17 +196,18 @@ func (s *Service) recordFileSnapshot(change tools.FileChange) error {
 		}
 	}
 	_, err := s.appendEvent(eventlog.EventPayload{
-		Path:            change.Path,
-		BeforeHash:      beforeHash,
-		AfterHash:       afterHash,
-		LineEnding:      change.LineEnding,
-		Encoding:        change.Encoding,
-		HadBOM:          change.HadBOM,
-		Existed:         change.Existed,
-		Deleted:         change.Deleted,
-		AfterLineEnding: change.AfterLineEnding,
-		AfterEncoding:   change.AfterEncoding,
-		AfterHadBOM:     change.AfterHadBOM,
+		Path:                 change.Path,
+		ApprovedExternalPath: change.ApprovedExternalPath,
+		BeforeHash:           beforeHash,
+		AfterHash:            afterHash,
+		LineEnding:           change.LineEnding,
+		Encoding:             change.Encoding,
+		HadBOM:               change.HadBOM,
+		Existed:              change.Existed,
+		Deleted:              change.Deleted,
+		AfterLineEnding:      change.AfterLineEnding,
+		AfterEncoding:        change.AfterEncoding,
+		AfterHadBOM:          change.AfterHadBOM,
 	}, eventlog.EventFileSnapshot)
 	if err != nil {
 		return fmt.Errorf("记录文件改动事件失败: %w", err)
@@ -185,31 +216,46 @@ func (s *Service) recordFileSnapshot(change tools.FileChange) error {
 }
 
 // recordAssistantAndCheckpoint 记录 assistant 消息与本轮 checkpoint。
-func (s *Service) recordAssistantAndCheckpoint(content, model string, parts []tools.ResultPart, durations ...int64) {
+func (s *Service) recordAssistantAndCheckpoint(content, model string, parts []tools.ResultPart, durations ...int64) error {
+	return s.recordAssistantWithReasoning(content, "", model, parts, durations...)
+}
+
+// Persist the provider's displayable reasoning separately from answer content.
+// It is UI history, not a replacement for signed provider continuation state.
+func (s *Service) recordAssistantWithReasoning(content, reasoning, model string, parts []tools.ResultPart, durations ...int64) error {
 	if s.eventStore == nil {
-		return
+		return nil
 	}
 	parts = s.mergeTurnTimelineParts(parts, content, "completed")
 	// Backfill provider- or test-produced file parts that did not pass through
 	// executeToolCall. Normal tool results are already registered and skipped by
 	// tool-call ID plus canonical path.
-	_ = s.recordMessageArtifacts(parts)
+	if err := s.recordMessageArtifacts(parts); err != nil {
+		return fmt.Errorf("保存回复产物失败: %w", err)
+	}
 	durationMs := int64(0)
 	if len(durations) > 0 && durations[0] > 0 {
 		durationMs = durations[0]
 	}
-	_, _ = s.appendEvent(eventlog.EventPayload{
+	_, err := s.appendEvent(eventlog.EventPayload{
 		Role:         "assistant",
 		Content:      content,
+		Reasoning:    redactSensitiveText(reasoning),
 		Model:        model,
 		DurationMs:   durationMs,
 		Parts:        toEventParts(parts),
 		FailureState: toEventFailureStrategyState(s.failureStrategySnapshot()),
 	}, eventlog.EventAssistantMessage)
-	_, _ = s.appendEvent(eventlog.EventPayload{
+	if err != nil {
+		return fmt.Errorf("保存模型回复失败: %w", err)
+	}
+	_, err = s.appendEvent(eventlog.EventPayload{
 		Label:     truncateLabel(content),
 		TurnIndex: s.sessionState.TurnCount,
 	}, eventlog.EventCheckpoint)
+	if err != nil {
+		return fmt.Errorf("回复已保存，但创建检查点失败: %w", err)
+	}
 
 	// 更新活动会话的时间戳与标题（首轮用用户/助手内容作标题）。
 	if s.projects != nil {
@@ -219,16 +265,32 @@ func (s *Service) recordAssistantAndCheckpoint(content, model string, parts []to
 		}
 		if s.sessionState.TurnCount <= 1 {
 			if projectID != "" {
-				_ = s.projects.SetSessionTitleForProject(projectID, sessionID, truncateLabel(content))
+				err = s.projects.SetSessionTitleForProject(projectID, sessionID, truncateLabel(content))
 			} else {
-				_ = s.projects.SetSessionTitle(sessionID, truncateLabel(content))
+				err = s.projects.SetSessionTitle(sessionID, truncateLabel(content))
 			}
 		} else if projectID != "" {
-			_ = s.projects.TouchSession(projectID, sessionID)
+			err = s.projects.TouchSession(projectID, sessionID)
 		} else {
-			_ = s.projects.TouchActiveSession()
+			err = s.projects.TouchActiveSession()
 		}
 	}
+	if err != nil {
+		return fmt.Errorf("回复已保存，但更新会话信息失败: %w", err)
+	}
+	return nil
+}
+
+// The answer and any tool effects already exist at this point. A disk failure
+// must be reported without rolling back real work or replacing visible output.
+func (s *Service) commitAssistantResult(result ChatResult, durationMs int64) (ChatResult, error) {
+	result.TurnCommitted = true
+	err := s.recordAssistantWithReasoning(result.Content, result.Reasoning, result.Model, result.Parts, durationMs)
+	if err != nil {
+		result.HistoryError = fmt.Sprintf("本轮结果未能完整保存，请保留当前输出并检查存储：%v", err)
+	}
+	result.State = s.workbenchStateLocked()
+	return result, err
 }
 
 // ListCheckpoints 返回当前对话线的检查点（供前端 Timeline）。
@@ -238,7 +300,17 @@ func (s *Service) ListCheckpoints() []CheckpointInfo {
 	if s.eventStore == nil {
 		return []CheckpointInfo{}
 	}
+	head := s.eventStore.Head()
 	var out []CheckpointInfo
+	// Compaction changes only the model view. It must not move the visible
+	// current checkpoint or make an unchanged file timeline look rewindable.
+	chain := s.eventStore.Events()
+	for index := len(chain) - 1; index >= 0; index-- {
+		if chain[index].Type != eventlog.EventContextCondensed {
+			head = chain[index].ID
+			break
+		}
+	}
 	for _, ev := range s.eventStore.Checkpoints() {
 		out = append(out, CheckpointInfo{
 			ID:        ev.ID,
@@ -246,6 +318,7 @@ func (s *Service) ListCheckpoints() []CheckpointInfo {
 			TurnIndex: ev.Payload.TurnIndex,
 			Timestamp: ev.TS.Format(time.RFC3339),
 			Preview:   ev.Payload.Label,
+			IsCurrent: ev.ID == head,
 		})
 	}
 	if out == nil {
@@ -287,8 +360,11 @@ func (s *Service) restoreCurrentBranchTo(targetID string) error {
 	if !s.eventStore.IsOnCurrentChain(targetID) {
 		return fmt.Errorf("目标事件不在当前对话分支上: %s", targetID)
 	}
-	policy := s.sandboxPolicy()
 	events := s.eventStore.EventsToUndo(targetID)
+	policy, err := s.policyForRecordedChanges(events)
+	if err != nil {
+		return err
+	}
 	if err := s.verifyCurrentFileStates(policy, events); err != nil {
 		return err
 	}
@@ -350,7 +426,7 @@ func captureWorkspaceBackups(policy tools.SandboxPolicy, paths []string) ([]work
 		if err != nil {
 			return nil, err
 		}
-		text, err := tools.ReadFileText(abs)
+		text, err := tools.ReadFileSnapshot(abs)
 		if err == nil {
 			backups = append(backups, workspaceBackup{path: path, content: text.Content, existed: true, lineEnding: string(text.LineEnding), encoding: string(text.Encoding), hadBOM: text.HadBOM})
 			continue
@@ -386,6 +462,13 @@ func (s *Service) verifyCurrentFileStates(policy tools.SandboxPolicy, events []e
 			return err
 		}
 		current, err := tools.ReadFileText(abs)
+		encoding := ev.Payload.AfterEncoding
+		if encoding == "" {
+			encoding = ev.Payload.Encoding
+		}
+		if encoding == string(tools.EncodingBinary) {
+			current, err = tools.ReadFileSnapshot(abs)
+		}
 		if ev.Payload.Deleted {
 			if os.IsNotExist(err) {
 				continue
@@ -657,6 +740,7 @@ type SessionMessage struct {
 	ID          string             `json:"id"`
 	Role        string             `json:"role"`
 	Content     string             `json:"content"`
+	Reasoning   string             `json:"reasoning,omitempty"`
 	Model       string             `json:"model,omitempty"`
 	CreatedAt   string             `json:"createdAt"`
 	DurationMs  int64              `json:"durationMs,omitempty"`
@@ -741,6 +825,7 @@ func sessionMessagesFromEventStore(store *eventlog.Store) []SessionMessage {
 				ID:         ev.ID,
 				Role:       "assistant",
 				Content:    content,
+				Reasoning:  ev.Payload.Reasoning,
 				Model:      ev.Payload.Model,
 				CreatedAt:  ev.TS.Format(time.RFC3339),
 				DurationMs: ev.Payload.DurationMs,
@@ -751,6 +836,7 @@ func sessionMessagesFromEventStore(store *eventlog.Store) []SessionMessage {
 				ID:         ev.ID,
 				Role:       "assistant",
 				Content:    ev.Payload.Content,
+				Reasoning:  ev.Payload.Reasoning,
 				Model:      ev.Payload.Model,
 				CreatedAt:  ev.TS.Format(time.RFC3339),
 				DurationMs: ev.Payload.DurationMs,
@@ -926,7 +1012,7 @@ type BranchInfo struct {
 	Label     string `json:"label"`     // 分支标签（最后一个 checkpoint 摘要）
 	TurnCount int    `json:"turnCount"` // 该分支的轮数
 	Timestamp string `json:"timestamp"` // 叶子事件时间
-	IsCurrent bool   `json:"isCurrent"` // 是否为当前分支
+	IsCurrent bool   `json:"isCurrent"` // 当前是否位于该分支末端
 }
 
 // ListBranches 返回所有对话线（分支）。当前分支标记 IsCurrent。
@@ -937,7 +1023,6 @@ func (s *Service) ListBranches() []BranchInfo {
 		return []BranchInfo{}
 	}
 	head := s.eventStore.Head()
-	currentLeaf := s.currentLeaf(head)
 
 	var out []BranchInfo
 	for _, leaf := range s.eventStore.Leaves() {
@@ -961,26 +1046,13 @@ func (s *Service) ListBranches() []BranchInfo {
 			Label:     label,
 			TurnCount: turns,
 			Timestamp: leaf.TS.Format(time.RFC3339),
-			IsCurrent: leaf.ID == currentLeaf,
+			IsCurrent: leaf.ID == head,
 		})
 	}
 	if out == nil {
 		return []BranchInfo{}
 	}
 	return out
-}
-
-// currentLeaf 返回包含 head 的那条线的叶子 ID（head 本身即在其线的末端时就是它）。
-func (s *Service) currentLeaf(head string) string {
-	// head 所在线的叶子：在所有叶子里找 chain 包含 head 的那个。
-	for _, leaf := range s.eventStore.Leaves() {
-		for _, ev := range s.eventStore.Chain(leaf.ID) {
-			if ev.ID == head {
-				return leaf.ID
-			}
-		}
-	}
-	return head
 }
 
 // SwitchBranch 切换到另一条对话线（叶子）：把文件与对话都切到目标分支的末端状态。
@@ -1001,14 +1073,20 @@ func (s *Service) switchBranch(leafID string) (WorkbenchState, error) {
 	if s.eventStore == nil {
 		return s.workbenchStateLocked(), fmt.Errorf("未启用会话持久化，无法切换分支")
 	}
+	if _, ok := s.eventStore.Event(leafID); !ok {
+		return s.workbenchStateLocked(), fmt.Errorf("找不到目标分支事件: %s", leafID)
+	}
 	head := s.eventStore.Head()
 	if head == leafID {
 		return s.workbenchStateLocked(), nil
 	}
 	ancestor := s.eventStore.CommonAncestor(head, leafID)
-	policy := s.sandboxPolicy()
 	undoEvents := s.eventStore.EventsToUndo(ancestor)
 	replayEvents := s.eventStore.FileSnapshotsBetween(ancestor, leafID)
+	policy, policyErr := s.policyForRecordedChanges(append(append([]eventlog.Event(nil), undoEvents...), replayEvents...))
+	if policyErr != nil {
+		return s.workbenchStateLocked(), policyErr
+	}
 	if err := s.verifyCurrentFileStates(policy, undoEvents); err != nil {
 		return s.workbenchStateLocked(), err
 	}
@@ -1040,6 +1118,25 @@ func (s *Service) switchBranch(leafID string) (WorkbenchState, error) {
 		if err := tools.RestoreFile(policy, ev.Payload.Path, before, ev.Payload.Existed, ev.Payload.LineEnding, ev.Payload.Encoding, ev.Payload.HadBOM); err != nil {
 			return restoreOnError(fmt.Errorf("撤销文件 %s 失败: %w", ev.Payload.Path, err))
 		}
+	}
+
+	// The target branch may touch files absent from the current branch. Check
+	// their expected ancestor state too, including newly created/deleted files,
+	// before replay can overwrite changes made outside EchoCode.
+	expectedBeforeReplay := make([]eventlog.Event, 0, len(replayEvents))
+	seenReplayPath := make(map[string]bool)
+	for _, ev := range replayEvents {
+		if seenReplayPath[ev.Payload.Path] {
+			continue
+		}
+		seenReplayPath[ev.Payload.Path] = true
+		ev.Payload.AfterHash = ev.Payload.BeforeHash
+		ev.Payload.Deleted = !ev.Payload.Existed
+		ev.Payload.AfterEncoding = ev.Payload.Encoding
+		expectedBeforeReplay = append(expectedBeforeReplay, ev)
+	}
+	if err := s.verifyCurrentFileStates(policy, expectedBeforeReplay); err != nil {
+		return restoreOnError(err)
 	}
 
 	// 3. 重放目标线：从祖先到叶子，顺序写入 after-image。

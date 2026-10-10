@@ -1,0 +1,26 @@
+.inline-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.7;
+}
+.inline-notice > svg { flex: 0 0 auto; margin-top: 2px; color: var(--text-muted); }
+.inline-notice[data-tone="error"] { border-color: color-mix(in srgb, var(--red) 30%, var(--border-color)); background: color-mix(in srgb, var(--red) 4%, var(--bg-main)); }
+.inline-notice[data-tone="error"] > svg { color: var(--red); }
+.inline-notice-message { flex: 1; min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.inline-notice button { display: grid; place-items: center; flex: 0 0 auto; width: 24px; height: 24px; padding: 0; margin: -2px -3px -2px 0; color: var(--text-muted); background: transparent; border: 0; border-radius: 4px; cursor: pointer; }
+.inline-notice button:hover { color: var(--text-primary); background: var(--bg-hover); }
+.inline-notice button:focus-visible { outline: 2px solid var(--focus-outline); outline-offset: 2px; }
+.workbench-notice { width: calc(100% - var(--conversation-gutter) * 2); margin: 10px auto 0; }
+.settings-page-head > .inline-notice { margin-top: 14px; }
+@container chat-pane (max-width: 650px) {
+  .workbench-notice { width: calc(100% - 32px); }
+}

@@ -35,6 +35,11 @@ func explicitTurnPathGrants(prompt string) []string {
 		if !isASCIILetter(runes[index]) || runes[index+1] != ':' || (runes[index+2] != '\\' && runes[index+2] != '/') {
 			continue
 		}
+		// The trailing letter of an URI scheme (http:, https:, file:) is not
+		// a drive grant. Never manufacture local write targets from web URLs.
+		if index > 0 && (isASCIILetter(runes[index-1]) || unicode.IsDigit(runes[index-1]) || strings.ContainsRune("_+.-", runes[index-1])) {
+			continue
+		}
 		start := index
 		end := index + 3
 		quote := rune(0)

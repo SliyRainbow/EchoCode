@@ -1,0 +1,81 @@
+name: Windows release build
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Intended release tag, for example v0.3.21
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    env:
+      ECHOCODE_RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - name: Checkout dispatch commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Validate tag and preinstalled compiler
+        shell: pwsh
+        run: |
+          if ($env:ECHOCODE_RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+$') { throw 'Invalid release tag' }
+          $compiler = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (!(Test-Path -LiteralPath $compiler)) { throw 'Preinstalled Inno Setup compiler is required' }
+          Write-Output "ECHOCODE_RELEASE_VERSION=$($env:ECHOCODE_RELEASE_TAG.Substring(1))" >> $env:GITHUB_ENV
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.5'
+          cache: true
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+
+      - name: Check frontend
+        working-directory: frontend
+        run: |
+          bun install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          bun run check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Check Go packages
+        run: |
+          go test -p 2 ./... -count=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go vet ./...
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build release assets
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $wails = Join-Path (go env GOPATH) 'bin\wails.exe'
+          ./scripts/Build-WindowsRelease.ps1 -Version $env:ECHOCODE_RELEASE_VERSION -WailsExecutable $wails
+
+      - name: Verify installer and uninstaller
+        run: ./scripts/Test-WindowsInstaller.ps1 -ReleaseDirectory "build/releases/$env:ECHOCODE_RELEASE_VERSION"
+
+      - name: Upload verified release bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: EchoCode-${{ inputs.tag }}-windows-amd64-release
+          path: build/releases/${{ env.ECHOCODE_RELEASE_VERSION }}/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

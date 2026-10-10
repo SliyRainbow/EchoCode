@@ -781,6 +781,7 @@ func recoverInterruptedTaskRuntime(store *eventlog.Store) (bool, error) {
 		terminalParts := appendTextPartIfMissing(state.Parts, content)
 		if _, err := store.AppendWithHeader(header, eventlog.EventPayload{
 			Role: "assistant", Content: content, Model: state.Model,
+			Reasoning:  redactSensitiveText(state.Reasoning),
 			DurationMs: state.DurationMs, Parts: toEventParts(terminalParts), Status: "interrupted",
 		}, eventlog.EventTurnTerminal); err != nil {
 			return false, err

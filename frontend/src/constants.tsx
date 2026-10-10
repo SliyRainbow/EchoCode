@@ -1,28 +1,5 @@
 import type { JSX } from "solid-js";
-import {
-  Archive,
-  BarChart3,
-  Brain,
-  CalendarClock,
-  Database,
-	Download,
-  Folder,
-  GitBranch,
-  Globe2,
-  Hash,
-  Info,
-  Keyboard,
-  Monitor,
-  Palette,
-  Plug,
-	Blocks,
-  Settings,
-  SlidersHorizontal,
-  Terminal,
-  User,
-  Users,
-  Wrench,
-} from "lucide-solid";
+import { BarChart3, Brain, CalendarClock, Database, Download, Folder, GitBranch, Globe2, Hash, Info, Keyboard, Monitor, Palette, Plug, Blocks, SlidersHorizontal, Users, Wrench } from "lucide-solid";
 import type { ProviderPreset, SettingsCategory } from "./ui-types";
 
 export const sandboxOptions = [
@@ -38,9 +15,8 @@ export const filesystemOptions = [
 ];
 
 export const approvalOptions = [
-  { value: "on-request", label: "按需确认" },
-  { value: "on-failure", label: "失败后确认" },
-  { value: "untrusted", label: "不可信时确认" },
+  { value: "on-request", label: "请求批准（边界内直接执行）" },
+  { value: "always", label: "每次询问" },
   { value: "never", label: "永不询问" },
 ];
 
@@ -196,8 +172,8 @@ export const sitePermissionOptions = [
   { value: "block", label: "阻止" },
 ];
 
-export const defaultSidebarWidth = 288;
-export const minSidebarWidth = 236;
+export const defaultSidebarWidth = 252;
+export const minSidebarWidth = 220;
 export const maxSidebarWidth = 420;
 export const sidebarWidthStorageKey = "echocode:sidebar-width";
 export const defaultBrowserPanelWidth = 720;
@@ -212,48 +188,48 @@ export const settingsGroups: Array<{
   items: Array<{ id: SettingsCategory; label: string; icon: () => JSX.Element }>;
 }> = [
   {
-    title: "个人",
+    title: "偏好",
     items: [
-      { id: "general", label: "常规", icon: () => <Settings size={15} /> },
       { id: "appearance", label: "外观", icon: () => <Palette size={15} /> },
-      { id: "config", label: "配置", icon: () => <SlidersHorizontal size={15} /> },
-      { id: "profile", label: "个性化", icon: () => <User size={15} /> },
       { id: "shortcuts", label: "键盘快捷键", icon: () => <Keyboard size={15} /> },
     ],
   },
   {
-    title: "集成",
+    title: "模型与 Agent",
     items: [
-		{ id: "extensions", label: "扩展中心", icon: () => <Download size={15} /> },
-      { id: "mcp", label: "MCP 服务器", icon: () => <Plug size={15} /> },
-		{ id: "plugins", label: "插件", icon: () => <Blocks size={15} /> },
+      { id: "models", label: "模型与连接", icon: () => <Database size={15} /> },
+      { id: "team", label: "AI 团队", icon: () => <Users size={15} /> },
+      { id: "memory", label: "记忆", icon: () => <Brain size={15} /> },
+    ],
+  },
+  {
+    title: "权限",
+    items: [
+      { id: "config", label: "权限与执行", icon: () => <SlidersHorizontal size={15} /> },
       { id: "browser", label: "浏览器", icon: () => <Globe2 size={15} /> },
       { id: "computer", label: "电脑操控", icon: () => <Monitor size={15} /> },
     ],
   },
-  {
-    title: "编码",
-    items: [
-      { id: "models", label: "模型设置", icon: () => <Database size={15} /> },
-      { id: "team", label: "AI 团队", icon: () => <Users size={15} /> },
-      { id: "skills", label: "技能与工具", icon: () => <Wrench size={15} /> },
-      { id: "commands", label: "命令", icon: () => <Terminal size={15} /> },
-      { id: "memory", label: "记忆", icon: () => <Brain size={15} /> },
-      { id: "index", label: "索引库", icon: () => <Hash size={15} /> },
-      { id: "usage", label: "使用统计", icon: () => <BarChart3 size={15} /> },
-      { id: "git", label: "Git", icon: () => <GitBranch size={15} /> },
-      { id: "environment", label: "环境", icon: () => <Folder size={15} /> },
-    ],
-  },
+  { title: "工作区", items: [
+    { id: "environment", label: "工作区与环境", icon: () => <Folder size={15} /> },
+    { id: "git", label: "Git", icon: () => <GitBranch size={15} /> },
+  ] },
+  { title: "用量与诊断", items: [
+    { id: "usage", label: "使用统计", icon: () => <BarChart3 size={15} /> },
+    { id: "index", label: "上下文诊断", icon: () => <Hash size={15} /> },
+  ] },
   {
     title: "应用",
     items: [
-      { id: "automation", label: "自动化任务", icon: () => <CalendarClock size={15} /> },
       { id: "about", label: "关于 EchoCode", icon: () => <Info size={15} /> },
     ],
   },
-  {
-    title: "已归档",
-    items: [{ id: "archive", label: "已归档对话", icon: () => <Archive size={15} /> }],
-  },
 ];
+
+export const extensionNavigation: Array<{id: SettingsCategory; label: string; icon: () => JSX.Element}> = [
+  { id: "extensions", label: "发现扩展", icon: () => <Download size={15} /> },
+  { id: "mcp", label: "MCP 服务器", icon: () => <Plug size={15} /> },
+  { id: "plugins", label: "插件", icon: () => <Blocks size={15} /> },
+  { id: "skills", label: "技能与工具", icon: () => <Wrench size={15} /> },
+];
+export const automationNavigation = { id: "automation" as const, label: "自动化任务", icon: () => <CalendarClock size={15} /> };

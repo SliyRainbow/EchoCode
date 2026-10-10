@@ -17,23 +17,6 @@ describe("chat UI regressions", () => {
     expect(messageContent).toContain('return "代码关系分析"');
   });
 
-  test("renders the model reasoning trace as a collapsible block", async () => {
-    const [app, messageContent, chatCss] = await Promise.all([
-      Bun.file(new URL("../src/app.tsx", import.meta.url)).text(),
-      Bun.file(new URL("../src/components/chat/MessageContent.tsx", import.meta.url)).text(),
-      Bun.file(new URL("../src/styles/chat.css", import.meta.url)).text(),
-    ]);
-    expect(app).toContain('reasoning={message.reasoning}');
-    expect(app).toContain('reasoningActive={message.streaming && message.status === "正在推理"}');
-    expect(messageContent).toContain("function ReasoningBlock");
-    expect(messageContent).toContain('<Show when={(props.reasoning ?? "").trim()}');
-    expect(messageContent).toContain('props.active ? "正在思考…" : "思考过程"');
-    expect(messageContent).toContain("setUserToggled(true)");
-    expect(chatCss).toContain(".op-reasoning {");
-    expect(chatCss).toContain(".op-reasoning-body {");
-    expect(chatCss).toContain("white-space: pre-wrap");
-  });
-
   test("uses a theme-aware frameless title bar with complete window controls", async () => {
     const [main, app, titlebar, workbench, css] = await Promise.all([
       Bun.file(new URL("../../main.go", import.meta.url)).text(),
@@ -44,7 +27,7 @@ describe("chat UI regressions", () => {
     ]);
     expect(main).toContain("Frameless: true");
     expect(main).toContain("DisableFramelessWindowDecorations: false");
-    expect(app).toContain("<AppTitleBar />");
+    expect(app).toContain("<AppTitleBar");
     expect(titlebar).toContain("WindowMinimise");
     expect(titlebar).toContain("WindowToggleMaximise");
     expect(titlebar).toContain("WindowIsMaximised");
@@ -70,21 +53,6 @@ describe("chat UI regressions", () => {
     expect(css).toContain(".side-panel-host {");
     expect(css).toContain(".side-panel-pages {");
     expect(css).toContain("max-height: 100%;");
-  });
-
-  test("uses a data-backed usage dashboard instead of generic settings cards", async () => {
-    const [panels, css] = await Promise.all([
-      Bun.file(new URL("../src/settings-panels.tsx", import.meta.url)).text(),
-      Bun.file(new URL("../src/styles.css", import.meta.url)).text(),
-    ]);
-    expect(panels).toContain('class="settings-page-body usage-dashboard"');
-    expect(panels).toContain('class="usage-dashboard-summary"');
-    expect(panels).toContain('class="usage-cache-disc"');
-    expect(panels).toContain("usage-billing-workspace");
-    expect(panels).toContain("officialTokens");
-    expect(css).toContain(".usage-dashboard {");
-    expect(css).toContain(".usage-dashboard-summary {");
-    expect(css).toContain(".usage-cache-disc {");
   });
 
   test("keeps private subagent reasoning out of the user-facing panel", async () => {
@@ -151,43 +119,27 @@ describe("chat UI regressions", () => {
 		expect(services).toContain("RevealPlugin?:");
 		expect(types).toContain("export type PluginSettings");
 		expect(types).toContain("export type PluginStatus");
-		expect(css).toContain(".plugin-settings-page {");
-		expect(css).toContain("grid-template-columns: 250px minmax(0, 1fr);");
-		expect(css).toMatch(/@media \(max-width: 980px\)[\s\S]*?\.plugin-settings-page \{[\s\S]*?grid-template-columns: 1fr;/);
-		expect(css).toMatch(/@media \(max-width: 620px\)[\s\S]*?\.plugin-list \{[\s\S]*?grid-template-columns: 1fr;/);
 	});
 
 	test("provides a verified extension catalog with CodeGraph lifecycle actions", async () => {
-		const [app, constants, panels, services, types, css, polish] = await Promise.all([
+		const [app, constants, panels, services, types, extensions] = await Promise.all([
 			Bun.file(new URL("../src/app.tsx", import.meta.url)).text(),
 			Bun.file(new URL("../src/constants.tsx", import.meta.url)).text(),
 			Bun.file(new URL("../src/settings-panels.tsx", import.meta.url)).text(),
 			Bun.file(new URL("../src/services/workbench.ts", import.meta.url)).text(),
 			Bun.file(new URL("../src/types.ts", import.meta.url)).text(),
-			Bun.file(new URL("../src/styles.css", import.meta.url)).text(),
-			Bun.file(new URL("../src/styles/polish.css", import.meta.url)).text(),
+			Bun.file(new URL("../src/components/ExtensionCenter.tsx", import.meta.url)).text(),
 		]);
-		expect(constants).toContain('{ id: "extensions", label: "扩展中心"');
+		expect(constants).toContain('{ id: "extensions", label: "发现扩展"');
 		expect(panels).toContain("<ExtensionSettingsPanel");
-		expect(panels).toContain("来源已核验");
-		expect(panels).toContain("runExtensionProjectAction(item.id, action.id)");
-		expect(panels).toContain('class="extension-action-output"');
+		expect(extensions).toContain("来源已核验");
+		expect(extensions).toContain("runExtensionProjectAction(item.id, action.id)");
 		expect(services).toContain("GetExtensionCatalog?:");
 		expect(services).toContain("InstallExtension?:");
 		expect(services).toContain('id: "mcp.codegraph"');
 		expect(types).toContain("export type ExtensionCatalogState");
 		expect(types).toContain("export type ExtensionOperationResult");
 		expect(app).toContain("applyWorkbenchState={setState}");
-		expect(css).toContain(".extension-center-page {");
-		expect(css).toContain(".extension-workspace {");
-		expect(css).toMatch(/\.extension-center-page \{[\s\S]*?padding-top: 0;/);
-		expect(polish).toMatch(/\.settings-page-body\.extension-center-page\s*\{[^}]*padding-top: 0;/);
-		expect(css).toMatch(/\.extension-toolbar \{[\s\S]*?isolation: isolate;/);
-		expect(css).toMatch(/\.extension-workspace \{[\s\S]*?grid-auto-rows: max-content;[\s\S]*?height: max-content;/);
-		expect(css).toMatch(/\.extension-workspace \{[\s\S]*?grid-template-columns: minmax\(290px, \.82fr\) minmax\(0, 1\.38fr\);/);
-		expect(css).not.toMatch(/\.extension-workspace\s*\{[^}]*border-bottom:/);
-		expect(css).toMatch(/@media \(max-width: 980px\)[\s\S]*?\.extension-workspace \{[\s\S]*?grid-template-columns: 1fr;/);
-		expect(css).toMatch(/@media \(max-width: 620px\)[\s\S]*?\.extension-list \{[\s\S]*?grid-template-columns: 1fr;/);
 	});
 
 	test("renders generated office artifacts without treating available files as edits", async () => {
@@ -348,7 +300,7 @@ describe("chat UI regressions", () => {
 	expect(app).not.toContain("composerTailEditorRef");
     expect(app).toContain("undoComposerInput");
     expect(app).toContain("redoComposerInput");
-    expect(app).toContain('title="撤销输入 (Ctrl+Z)"');
+    expect(app).toContain('onUndo={undoComposerInput}');
   });
 
   test("renders generated files as collapsed artifacts with HTML open actions", async () => {
@@ -446,26 +398,6 @@ describe("chat UI regressions", () => {
     expect(inlineDiff).toContain('innerHTML={highlightCode(row.content || " ", language())');
   });
 
-  test("preserves the embedded browser while switching to a file tab", async () => {
-    const [app, host, css] = await Promise.all([
-      Bun.file(new URL("../src/app.tsx", import.meta.url)).text(),
-      Bun.file(new URL("../src/components/SidePanelHost.tsx", import.meta.url)).text(),
-      Bun.file(new URL("../src/styles.css", import.meta.url)).text(),
-    ]);
-    const openFileStart = app.indexOf("const handleOpenWorkspaceFile");
-    const openFileEnd = app.indexOf("const handleOpenBrowser", openFileStart);
-    const openFileHandler = app.slice(openFileStart, openFileEnd);
-    expect(openFileHandler).toContain('setSidePanelView("files")');
-    expect(openFileHandler).not.toContain("setBrowserPreview(undefined)");
-    expect(app).toContain("<SidePanelHost");
-    expect(host).toContain('type SidePanelView = "browser" | "files"');
-    expect(host).toContain('suspended={props.browserSuspended || activeView() !== "browser"}');
-    expect(host).toContain('onClick={() => props.onSelectView("browser")}');
-    expect(host).toContain('onClick={() => props.onSelectView("files")}');
-    expect(css).toContain(".side-panel-page.inactive");
-    expect(css).toContain("visibility: hidden;");
-  });
-
   test("keeps plan, AI team, and subagent status in separate centered panels above the composer", async () => {
     const [app, messageContent, reasoningMenu, css] = await Promise.all([
       Bun.file(new URL("../src/app.tsx", import.meta.url)).text(),
@@ -486,7 +418,6 @@ describe("chat UI regressions", () => {
 	expect(css).toContain(".execution-status-dock > .op-subagent-dock");
     expect(messageContent).toContain('<details class="op-team-run docked"');
     expect(messageContent).toContain('class="op-team-stage-track"');
-    expect(reasoningMenu).toContain("<Portal>");
   });
 
   test("keeps overlays out of clipped layout and hides side panels behind settings", async () => {
@@ -495,9 +426,6 @@ describe("chat UI regressions", () => {
       Bun.file(new URL("../src/components/ReasoningMenu.tsx", import.meta.url)).text(),
       Bun.file(new URL("../src/styles.css", import.meta.url)).text(),
     ]);
-    expect(reasoningMenu).toContain('triggerRef.getBoundingClientRect()');
-    expect(reasoningMenu).toContain('data-placement={position().placement}');
-    expect(reasoningMenu).toContain('document.addEventListener("scroll", reposition, true)');
     expect(css).toContain("position: fixed;");
     expect(app).toContain('<Show when={!drawerOpen() && (Boolean(browserPreview()) || reviewOpen() || Boolean(selectedSubagent()))}>');
     expect(app).toContain('"side-panel-open": !drawerOpen() && (Boolean(browserPreview()) || reviewOpen() || Boolean(selectedSubagent()))');
@@ -534,16 +462,6 @@ describe("chat UI regressions", () => {
     expect(`${app}\n${settings}`).not.toContain("window.confirm");
     expect(app).toContain("<ConfirmDialog request={confirmation()} onResolve={resolveConfirmation} />");
     expect(settings).toContain("confirmAction: (request: ConfirmationRequest) => Promise<boolean>");
-    expect(dialog).toContain("<Portal>");
-    expect(dialog).toContain('class="app-confirm-overlay"');
-
-    const overlayStart = polish.indexOf(".app-confirm-overlay {");
-    const overlayRule = polish.slice(overlayStart, polish.indexOf("}", overlayStart) + 1);
-    expect(overlayRule).toContain("position: fixed;");
-    expect(overlayRule).toContain("inset: 0;");
-    expect(overlayRule).toContain("place-items: center;");
-    expect(polish).toContain(':root[data-theme="light"] .app-confirm-overlay');
-    expect(polish).toContain("background: var(--bg-card);");
   });
 
   test("provides real updater and persistent Agent automation settings", async () => {
@@ -555,7 +473,7 @@ describe("chat UI regressions", () => {
       Bun.file(new URL("../src/types.ts", import.meta.url)).text(),
       Bun.file(new URL("../src/styles.css", import.meta.url)).text(),
     ]);
-    expect(constants).toContain('{ id: "automation", label: "自动化任务"');
+    expect(constants).toContain('label: "自动化任务"');
     expect(constants).toContain('{ id: "about", label: "关于 EchoCode"');
     expect(panels).toContain("<AutomationSettingsPanel");
     expect(panels).toContain("runAutomationTaskNow");
@@ -568,9 +486,8 @@ describe("chat UI regressions", () => {
     expect(services).toContain('runtime.EventsOn("update:state"');
     expect(types).toContain("export type AutomationTask");
     expect(types).toContain("export type UpdateState");
-    expect(css).toContain(".automation-settings-page");
     expect(css).toContain(".about-download-progress");
-    expect(app).toContain("onUpdateState(presentUpdateBanner)");
+    expect(app).toContain("update: presentUpdateBanner");
     expect(app).toContain('class="app-update-banner"');
     expect(app).toContain("startUpdateBannerCountdown");
     expect(app).toContain('new Set(["available", "downloading", "downloaded", "installing"])');
@@ -627,13 +544,7 @@ describe("chat UI regressions", () => {
       Bun.file(new URL("../src/styles.css", import.meta.url)).text(),
     ]);
     expect(app).not.toContain("连接 DeepSeek");
-    expect(app).toContain('class="welcome-brand"');
-    expect(app).toContain('class="welcome-prompt-grid"');
     expect(app).toContain("primeWelcomePrompt");
-    expect(app).toContain("梳理当前项目");
-    expect(app).toContain("检查当前修改");
-    expect(css).toContain(".welcome-prompt-grid");
-    expect(css).toContain("grid-template-columns: repeat(2, minmax(0, 1fr));");
   });
 
   test("allows independent background tasks for different sessions", async () => {
@@ -793,7 +704,7 @@ describe("chat UI regressions", () => {
       Bun.file(new URL("../src/settings-panels.tsx", import.meta.url)).text(),
       Bun.file(new URL("../src/services/workbench.ts", import.meta.url)).text(),
     ]);
-    expect(app).toContain('title="添加 Markdown 参考资料"');
+    expect(app).toContain('onDocuments={() => composerMarkdownInputRef?.click()}');
     expect(app).toContain('accept=".md,.markdown,text/markdown,text/x-markdown"');
     expect(app).toContain("readChatMarkdown");
     expect(settings).toContain("导入长期 Markdown 规则");

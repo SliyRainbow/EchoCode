@@ -1,7 +1,6 @@
 package protocol
 
 import (
-	"encoding/json"
 	"sort"
 	"strings"
 )
@@ -57,7 +56,7 @@ func emitAccumulatedToolCalls(events chan<- StreamEvent, accumulators map[int]*s
 	for _, index := range indexes {
 		item := accumulators[index]
 		arguments := strings.TrimSpace(item.Arguments.String())
-		if arguments == "" || !json.Valid([]byte(arguments)) {
+		if arguments == "" {
 			arguments = "{}"
 		}
 		callType := item.Type
@@ -69,7 +68,7 @@ func emitAccumulatedToolCalls(events chan<- StreamEvent, accumulators map[int]*s
 			Type: callType,
 			Function: ToolCallFunction{
 				Name:      item.Name.String(),
-				Arguments: json.RawMessage(arguments),
+				Arguments: preserveToolArguments(arguments),
 			},
 		})
 	}

@@ -23,6 +23,8 @@
 /frontend/wailsjs/
 /frontend/package.json.md5
 /frontend/package-lock.json
+/frontend/test-results/
+/frontend/playwright-report/
 
 # Go
 /coverage.out

@@ -48,6 +48,38 @@ type ProviderError struct {
 	Info ProviderErrorInfo
 }
 
+type upstreamError struct {
+	Message string `json:"message"`
+	Type    string `json:"type,omitempty"`
+	Code    any    `json:"code,omitempty"`
+}
+
+func providerErrorFromUpstream(provider string, payload *upstreamError, status int, requestID string) ProviderErrorInfo {
+	info := ProviderErrorInfo{Provider: provider, HTTPStatus: status, RequestID: requestID, Message: "模型服务返回错误"}
+	if payload != nil {
+		info.Type = strings.TrimSpace(payload.Type)
+		if payload.Code != nil {
+			info.Code = strings.TrimSpace(fmt.Sprint(payload.Code))
+		}
+		if strings.TrimSpace(payload.Message) != "" {
+			info.Message = strings.TrimSpace(payload.Message)
+		}
+	}
+	info.Retryable = shouldRetryOpenAICompatibleStatus(status) || status == 529
+	if status < 400 {
+		for _, value := range []string{info.Code, info.Type} {
+			switch value {
+			case "rate_limit_error", "rate_limit_exceeded", "overloaded_error", "overloaded", "api_error", "server_error", "timeout", "request_timeout":
+				info.Retryable = true
+			}
+		}
+	}
+	if isNonRetryableProviderErrorCode(info.Code) {
+		info.Retryable = false
+	}
+	return info
+}
+
 func (e *ProviderError) Error() string {
 	if e == nil {
 		return "provider request failed"

@@ -338,6 +338,12 @@ func (m *Manager) Install(source string) (Manifest, error) {
 }
 
 func (m *Manager) Uninstall(id string) error {
+	return m.UninstallWithCommit(id, nil)
+}
+
+// UninstallWithCommit keeps the package recoverable until the host has saved
+// its configuration. A failed commit restores the original installed path.
+func (m *Manager) UninstallWithCommit(id string, commit func() error) error {
 	if m == nil {
 		return errors.New("plugin manager is unavailable")
 	}
@@ -356,10 +362,34 @@ func (m *Manager) Uninstall(id string) error {
 	if err != nil || !within || filepath.Clean(root) == filepath.Clean(record.dir) {
 		return errors.New("refusing to remove a plugin outside the plugin directory")
 	}
-	if err := os.RemoveAll(record.dir); err != nil {
-		return fmt.Errorf("uninstall plugin: %w", err)
+	stage, err := os.MkdirTemp(root, ".uninstall-")
+	if err != nil {
+		return fmt.Errorf("stage plugin uninstall: %w", err)
+	}
+	backup := filepath.Join(stage, id)
+	if err := os.Rename(record.dir, backup); err != nil {
+		_ = os.Remove(stage)
+		return fmt.Errorf("stage plugin uninstall: %w", err)
+	}
+	if commit != nil {
+		if err := commit(); err != nil {
+			if restoreErr := os.Rename(backup, record.dir); restoreErr != nil {
+				m.Refresh()
+				return errors.Join(err, fmt.Errorf("restore plugin from %s: %w", backup, restoreErr))
+			}
+			_ = os.Remove(stage)
+			m.Refresh()
+			return err
+		}
 	}
 	m.Refresh()
+	within, err = pathutil.Within(root, stage)
+	if err != nil || !within || filepath.Clean(root) == filepath.Clean(stage) {
+		return errors.New("plugin uninstalled, but cleanup path is outside the plugin directory")
+	}
+	if err := os.RemoveAll(stage); err != nil {
+		return fmt.Errorf("plugin uninstalled; staged files remain at %s: %w", stage, err)
+	}
 	return nil
 }
 

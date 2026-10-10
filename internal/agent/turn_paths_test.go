@@ -47,6 +47,27 @@ func TestInferTurnTaskScopeDoesNotTreatModelNameAsPath(t *testing.T) {
 	}
 }
 
+func TestWebURLsDoNotGrantDrivesOrRequireFileWrites(t *testing.T) {
+	s := NewService(ServiceConfig{SkillsDir: t.TempDir()})
+	defer s.Close()
+	s.runtimeSettings.WorkspaceRoot = t.TempDir()
+	for _, prompt := range []string{
+		"用 browser 打开 http://127.0.0.1:3456 并填写表单",
+		"open https://example.com/docs/start.html and click Save",
+		"read `https://example.com/a/b` to inspect the website",
+	} {
+		if grants := explicitTurnPathGrants(prompt); len(grants) > 0 {
+			t.Fatalf("URL granted filesystem access: %v", grants)
+		}
+		if scope := s.inferTurnTaskScope(prompt, nil); scope.Enabled {
+			t.Fatalf("URL became file task: %+v", scope)
+		}
+	}
+	if scope := s.inferTurnTaskScope("read https://example.com/a/b and write `result.txt`", nil); !scope.RequireWrite || len(scope.Files) != 1 {
+		t.Fatalf("real file target lost: %+v", scope)
+	}
+}
+
 func TestInferTurnTaskScopeStillAppliesWithUnrestrictedFilesystem(t *testing.T) {
 	workspace := t.TempDir()
 	service := NewService(ServiceConfig{SkillsDir: t.TempDir()})

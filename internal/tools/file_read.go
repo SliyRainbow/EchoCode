@@ -144,7 +144,7 @@ type ListDirTool struct{ Policy SandboxPolicy }
 
 func (t ListDirTool) Name() string { return "list_dir" }
 func (t ListDirTool) Description() string {
-	return "列出当前工作区内的目录树，返回文件/目录类型与文件大小。首次探索使用 path='.'；可用 max_depth 控制递归深度。"
+	return "列出当前工作区内的目录树，返回 JSON entries（type、path、size_bytes）。entries[].path 可直接用于 read_file/list_dir，无需拼接类型或目录前缀。首次探索使用 path='.'；可用 max_depth 控制递归深度。"
 }
 func (t ListDirTool) InputSchema() map[string]any {
 	return map[string]any{
@@ -156,6 +156,18 @@ func (t ListDirTool) InputSchema() map[string]any {
 			"max_entries":    map[string]any{"type": "integer", "minimum": 1, "maximum": 500},
 		},
 	}
+}
+
+type listDirEntry struct {
+	Type      string `json:"type"`
+	Path      string `json:"path"`
+	SizeBytes *int64 `json:"size_bytes,omitempty"`
+}
+
+type listDirOutput struct {
+	Path      string         `json:"path"`
+	Entries   []listDirEntry `json:"entries"`
+	Truncated bool           `json:"truncated"`
 }
 
 func (t ListDirTool) Execute(_ context.Context, rawArgs json.RawMessage) (Result, error) {
@@ -187,8 +199,16 @@ func (t ListDirTool) Execute(_ context.Context, rawArgs json.RawMessage) (Result
 	if limit <= 0 || limit > maxListEntries {
 		limit = maxListEntries
 	}
-	var lines []string
-	count := 0
+	// Return paths in the same coordinate system accepted by read_file,
+	// including when listing a nested directory or an extra readable root.
+	listingPath := func(path string) string {
+		rel, relErr := filepath.Rel(t.Policy.WorkspaceRoot, path)
+		if relErr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+			return filepath.ToSlash(rel)
+		}
+		return filepath.ToSlash(path)
+	}
+	listing := listDirOutput{Path: listingPath(abs), Entries: make([]listDirEntry, 0)}
 	rootDepth := strings.Count(filepath.Clean(abs), string(os.PathSeparator))
 	walkErr := filepath.WalkDir(abs, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -211,37 +231,36 @@ func (t ListDirTool) Execute(_ context.Context, rawArgs json.RawMessage) (Result
 		if depth > args.MaxDepth || (!args.IncludeHidden && strings.HasPrefix(name, ".")) {
 			return nil
 		}
-		if count >= limit {
+		if len(listing.Entries) >= limit {
+			listing.Truncated = true
 			return filepath.SkipAll
 		}
-		rel, _ := filepath.Rel(abs, path)
-		rel = filepath.ToSlash(rel)
+		item := listDirEntry{Type: "file", Path: listingPath(path)}
 		if entry.IsDir() {
-			lines = append(lines, "d "+rel+"/")
-			count++
+			item.Type = "directory"
+			listing.Entries = append(listing.Entries, item)
 			if depth >= args.MaxDepth {
 				return filepath.SkipDir
 			}
 			return nil
 		} else if itemInfo, statErr := entry.Info(); statErr == nil {
-			lines = append(lines, fmt.Sprintf("f %s (%d bytes)", rel, itemInfo.Size()))
-		} else {
-			lines = append(lines, "f "+rel)
+			size := itemInfo.Size()
+			item.SizeBytes = &size
 		}
-		count++
+		listing.Entries = append(listing.Entries, item)
 		return nil
 	})
 	if walkErr != nil {
 		return errorResult("读取目录失败: " + walkErr.Error()), nil
 	}
-	if count >= limit {
-		lines = append(lines, fmt.Sprintf("... [已达到 %d 项上限]", limit))
+	body, err := json.Marshal(listing)
+	if err != nil {
+		return errorResult("编码目录结果失败: " + err.Error()), nil
 	}
-	body := strings.Join(lines, "\n")
 	return Result{
-		Summary: fmt.Sprintf("目录 %s 已列出 %d 项（深度 %d）", args.Path, count, args.MaxDepth),
+		Summary: fmt.Sprintf("目录 %s 已列出 %d 项（深度 %d）；entries[].path 可直接用于文件工具", args.Path, len(listing.Entries), args.MaxDepth),
 		Parts: []ResultPart{
-			{Kind: PartToolCall, Name: t.Name(), Status: "ok", Input: args.Path, Output: body},
+			{Kind: PartToolCall, Name: t.Name(), Status: "ok", Input: args.Path, Output: string(body)},
 		},
 	}, nil
 }

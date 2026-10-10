@@ -10,6 +10,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,6 +34,8 @@ var (
 	procGetForegroundWindow    = user32.NewProc("GetForegroundWindow")
 	procShowWindow             = user32.NewProc("ShowWindow")
 	procSetForegroundWindow    = user32.NewProc("SetForegroundWindow")
+	procAttachThreadInput      = user32.NewProc("AttachThreadInput")
+	procBringWindowToTop       = user32.NewProc("BringWindowToTop")
 	procSetCursorPos           = user32.NewProc("SetCursorPos")
 	procMouseEvent             = user32.NewProc("mouse_event")
 	procSendInput              = user32.NewProc("SendInput")
@@ -143,6 +146,8 @@ func (*Service) ListWindows(ctx context.Context) ([]Window, error) {
 }
 
 func (*Service) FocusWindow(ctx context.Context, id string) error {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	hwnd, err := validWindow(ctx, id)
 	if err != nil {
 		return err
@@ -151,9 +156,32 @@ func (*Service) FocusWindow(ctx context.Context, id string) error {
 	if iconic != 0 {
 		procShowWindow.Call(hwnd, swRestore)
 	}
-	ok, _, callErr := procSetForegroundWindow.Call(hwnd)
-	if ok == 0 {
-		return fmt.Errorf("无法聚焦窗口 %s: %w", id, callErr)
+	foreground, _, _ := procGetForegroundWindow.Call()
+	if foreground == hwnd {
+		return nil
+	}
+	procSetForegroundWindow.Call(hwnd)
+	foreground, _, _ = procGetForegroundWindow.Call()
+	if foreground != hwnd && foreground != 0 {
+		// Agent calls run on Go worker threads rather than the Wails UI thread.
+		// Temporarily join the foreground input queue to perform the authorised
+		// focus change, then always detach before sending any keyboard input.
+		thread := uintptr(windows.GetCurrentThreadId())
+		foregroundThread, _, _ := procGetWindowThreadProcess.Call(foreground, 0)
+		if foregroundThread != 0 && foregroundThread != thread {
+			attached, _, _ := procAttachThreadInput.Call(thread, foregroundThread, 1)
+			if attached != 0 {
+				func() {
+					defer procAttachThreadInput.Call(thread, foregroundThread, 0)
+					procBringWindowToTop.Call(hwnd)
+					procSetForegroundWindow.Call(hwnd)
+				}()
+			}
+		}
+		foreground, _, _ = procGetForegroundWindow.Call()
+	}
+	if foreground != hwnd {
+		return fmt.Errorf("无法聚焦窗口 %s；请将目标窗口切到前台后重试", id)
 	}
 	return nil
 }

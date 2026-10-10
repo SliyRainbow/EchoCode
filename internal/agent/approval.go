@@ -37,7 +37,7 @@ type ApprovalRequest struct {
 // ApprovalDecision 是用户对某次审批的答复。
 type ApprovalDecision struct {
 	Approved bool
-	// Scope: "once"=仅本次；"session"=本会话该工具都允许。
+	// Scope: "once"=仅本次；"session"=本会话内的相同操作指纹。
 	Scope string
 }
 
@@ -87,15 +87,19 @@ func (b *approvalBroker) hasNotify() bool {
 	return b.notify != nil
 }
 
-// sessionAllowed 判断某工具是否已被「本会话都允许」。
+// sessionAllowed is the legacy empty-argument fingerprint lookup.
 func (b *approvalBroker) sessionAllowed(tool string) bool {
 	return b.sessionAllowedFor(tool, nil)
 }
 
 func (b *approvalBroker) sessionAllowedFor(tool string, rawArgs json.RawMessage) bool {
+	return b.fingerprintAllowed(approvalFingerprint(tool, rawArgs))
+}
+
+func (b *approvalBroker) fingerprintAllowed(fingerprint string) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.allowAll[approvalFingerprint(tool, rawArgs)]
+	return b.allowAll[fingerprint]
 }
 
 // request 发起一次审批并阻塞等待结果（受 ctx 取消/超时约束）。
@@ -212,6 +216,9 @@ func (s *Service) needsApproval(toolName string, rawArgs json.RawMessage) bool {
 //   - 其他需审批工具（如 run_command）：审批通过才 Execute。
 //   - 无需审批：直接 Execute。
 func (s *Service) runToolWithApproval(ctx context.Context, tool tools.Tool, name string, rawArgs json.RawMessage) (tools.Result, error) {
+	if result, handled, err := s.runBoundaryFileTool(ctx, tool, rawArgs); handled {
+		return result, err
+	}
 	requiresApproval := s.needsApproval(name, rawArgs)
 	if readOnly, ok := tool.(interface{ ReadOnly() bool }); ok && readOnly.ReadOnly() && !strings.HasPrefix(name, "mcp__") {
 		requiresApproval = false

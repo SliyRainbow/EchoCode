@@ -30,6 +30,7 @@ type persistedContextMessage struct {
 	Continuation     *protocol.ProviderContinuation `json:"continuation,omitempty"`
 	ToolCalls        []protocol.ToolCall            `json:"toolCalls,omitempty"`
 	ToolCallID       string                         `json:"toolCallId,omitempty"`
+	ToolError        bool                           `json:"toolError,omitempty"`
 	Name             string                         `json:"name,omitempty"`
 	InternalKind     string                         `json:"internalKind,omitempty"`
 }
@@ -41,7 +42,7 @@ func encodePersistedContextView(messages []protocol.Message) persistedContextVie
 			Role: message.Role, Content: message.Content, ReasoningContent: message.ReasoningContent,
 			Attachments:  append([]protocol.Attachment(nil), message.Attachments...),
 			Continuation: message.Continuation, ToolCalls: append([]protocol.ToolCall(nil), message.ToolCalls...),
-			ToolCallID: message.ToolCallID, Name: message.Name, InternalKind: message.InternalKind,
+			ToolCallID: message.ToolCallID, ToolError: message.ToolError, Name: message.Name, InternalKind: message.InternalKind,
 		})
 	}
 	return stored
@@ -56,7 +57,7 @@ func decodePersistedContextView(encoded []byte) ([]protocol.Message, error) {
 				Role: message.Role, Content: message.Content, ReasoningContent: message.ReasoningContent,
 				Attachments:  append([]protocol.Attachment(nil), message.Attachments...),
 				Continuation: message.Continuation, ToolCalls: append([]protocol.ToolCall(nil), message.ToolCalls...),
-				ToolCallID: message.ToolCallID, Name: message.Name, InternalKind: message.InternalKind,
+				ToolCallID: message.ToolCallID, ToolError: message.ToolError, Name: message.Name, InternalKind: message.InternalKind,
 			})
 		}
 		return messages, nil
@@ -245,17 +246,29 @@ func (s *Service) persistContextCondensation(result contextCompressionResult, vi
 }
 
 func (s *Service) prepareSessionContext(route chatRoute) (contextCompressionResult, error) {
+	return s.compressSessionContext(route, false)
+}
+
+func (s *Service) compressSessionContext(route chatRoute, force bool) (contextCompressionResult, error) {
 	profile, _ := ReasoningProfileFor(s.reasoning)
 	budget := contextBudgetForRoutePolicy(route, profile.Budget.ContextPolicy)
 	result := contextCompressionResult{Budget: budget, BeforeTokens: estimateProtocolMessagesTokens(s.sessionMessages)}
 	s.updateContextTelemetry(budget, result.BeforeTokens)
-	if result.BeforeTokens <= budget.TriggerTokens {
+	if !force && result.BeforeTokens <= budget.TriggerTokens {
 		result.AfterTokens = result.BeforeTokens
 		return result, nil
 	}
 
-	compressed, removed := compressProtocolMessages(s.sessionMessages, budget)
+	compressionBudget := budget
+	if force {
+		compressionBudget.TargetTokens = min(budget.TargetTokens, max(512, result.BeforeTokens*65/100))
+	}
+	compressed, removed := compressProtocolMessages(s.sessionMessages, compressionBudget)
 	result.AfterTokens = estimateProtocolMessagesTokens(compressed)
+	if force && result.AfterTokens >= result.BeforeTokens {
+		result.AfterTokens = result.BeforeTokens
+		return result, nil
+	}
 	if result.AfterTokens > budget.InputLimitTokens {
 		return result, fmt.Errorf(
 			"当前请求约 %d tokens，超过模型 %s 的可用输入预算 %d tokens；请缩短本轮输入或选择更大上下文模型",
@@ -280,14 +293,21 @@ func (s *Service) prepareSessionContext(route chatRoute) (contextCompressionResu
 }
 
 func (s *Service) updateContextTelemetry(budget contextBudget, estimatedTokens int) {
-	s.sessionState.ContextWindowTokens = budget.WindowTokens
-	s.sessionState.ContextWindowSource = budget.WindowSource
-	s.sessionState.EstimatedInputTokens = estimatedTokens
-	s.sessionState.InputBudgetTokens = budget.InputLimitTokens
+	setContextTelemetry(&s.sessionState, budget, estimatedTokens)
+}
+
+func setContextTelemetry(state *DeepSeekSessionState, budget contextBudget, estimatedTokens int) {
+	state.ContextWindowTokens = budget.WindowTokens
+	state.ContextWindowSource = budget.WindowSource
+	state.ContextUsageSource = "estimated"
+	state.EstimatedInputTokens = estimatedTokens
+	state.InputBudgetTokens = budget.InputLimitTokens
+	state.CompressionTriggerTokens = budget.TriggerTokens
+	state.CompressionTargetTokens = budget.TargetTokens
 	if budget.InputLimitTokens > 0 {
-		s.sessionState.ContextUsagePercent = float64(estimatedTokens) / float64(budget.InputLimitTokens) * 100
+		state.ContextUsagePercent = float64(estimatedTokens) / float64(budget.InputLimitTokens) * 100
 	} else {
-		s.sessionState.ContextUsagePercent = 0
+		state.ContextUsagePercent = 0
 	}
 }
 
@@ -452,6 +472,24 @@ internalMessagesRead:
 
 	oldMessages := flattenProtocolMessageGroups(groups[:tailStart])
 	recentMessages := flattenProtocolMessageGroups(groups[tailStart:])
+	// A long tool-only sub-turn can push its user's request outside the recent
+	// groups. Keep that request (and its host context) verbatim, not just a
+	// clipped line in the summary. Tool call/result groups remain indivisible.
+	lastUser := -1
+	for index, message := range body {
+		if message.Role == "user" && message.InternalKind == "" {
+			lastUser = index
+		}
+	}
+	if lastUser >= 0 && lastUser < len(oldMessages) {
+		start := lastUser
+		if start > 0 && oldMessages[start-1].InternalKind == contextRequestKind {
+			start--
+		}
+		preserved := cloneProtocolMessages(oldMessages[start : lastUser+1])
+		oldMessages = append(oldMessages[:start], oldMessages[lastUser+1:]...)
+		recentMessages = append(preserved, recentMessages...)
+	}
 	removed := len(oldMessages) + removedFailureContexts + removedRequestContexts + removedExecutionContexts
 	if existingSummary != "" || len(oldMessages) > 0 {
 		summaryTokens := budget.TargetTokens / 4
@@ -622,6 +660,10 @@ func estimateProtocolMessagesTokens(messages []protocol.Message) int {
 	total := 0
 	for _, message := range messages {
 		total += 4 + estimatePromptTokens(message.Role) + estimatePromptTokens(message.Content)
+		total += estimatePromptTokens(message.ReasoningContent)
+		if message.Continuation != nil {
+			total += estimatePromptTokens(string(message.Continuation.Data))
+		}
 		total += len(message.Attachments) * 1_024
 		if len(message.ToolCalls) > 0 {
 			encoded, _ := json.Marshal(message.ToolCalls)
@@ -640,6 +682,9 @@ func fitToolLoopMessages(messages []protocol.Message, targetTokens int) []protoc
 		return fitted
 	}
 	clipProtocolMessagesToBudget(fitted, targetTokens)
+	if estimateProtocolMessagesTokens(fitted) > targetTokens {
+		fitted, _ = compressProtocolMessages(fitted, contextBudget{TargetTokens: targetTokens})
+	}
 	return fitted
 }
 

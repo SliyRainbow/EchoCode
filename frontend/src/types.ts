@@ -174,11 +174,24 @@ export type DeepSeekSessionState = {
   contextWindowTokens?: number;
   contextWindowSource?: string;
   estimatedInputTokens?: number;
+  contextUsageSource?: "estimated" | "provider";
   inputBudgetTokens?: number;
   contextUsagePercent?: number;
+  compressionTriggerTokens?: number;
+  compressionTargetTokens?: number;
   compressionCount?: number;
   compressedMessageCount?: number;
   lastCompressedAt?: string;
+};
+
+export type ContextCompressionResult = {
+  projectId: string;
+  sessionId: string;
+  compressed: boolean;
+  beforeTokens: number;
+  afterTokens: number;
+  removedMessages: number;
+  state: WorkbenchState;
 };
 
 export type ContextSection = {
@@ -312,7 +325,7 @@ export type RuntimeSettings = {
   filesystemAccess: "read-only" | "workspace-write" | "unrestricted" | string;
   networkAccess: boolean;
   shellAccess: boolean;
-  approvalPolicy: "never" | "on-request" | "on-failure" | "untrusted" | string;
+  approvalPolicy: "never" | "on-request" | "always" | string;
   workspaceRoot: string;
   extraWritableRoots: string[];
   toolTimeoutSeconds: number;
@@ -428,6 +441,7 @@ export type AutomationState = {
   tasks: AutomationTask[];
   running: boolean;
   updatedAt?: string;
+  error?: string;
 };
 
 export type SandboxCapabilities = {
@@ -758,6 +772,7 @@ export type WorkspaceSettings = {
 };
 
 export type WorkbenchState = {
+  storageError?: string;
   activeProjectId: string;
   activeSessionId: string;
   reasoning: ReasoningOption;
@@ -874,6 +889,7 @@ export type ChatResult = {
   state: WorkbenchState;
   parts?: MessagePart[];
   turnCommitted?: boolean;
+  historyError?: string;
   providerError?: {
     provider?: string;
     httpStatus?: number;
@@ -1202,6 +1218,7 @@ export type CheckpointInfo = {
   turnIndex: number;
   timestamp: string;
   preview: string;
+  isCurrent?: boolean;
 };
 
 // 对话线（分支）摘要（对应后端 agent.BranchInfo）。
@@ -1251,6 +1268,7 @@ export type SessionMessage = {
   id: string;
   role: "user" | "assistant" | "system" | string;
   content: string;
+  reasoning?: string;
   model?: string;
   createdAt: string;
   durationMs?: number;

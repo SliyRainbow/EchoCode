@@ -1,7 +1,6 @@
 package protocol
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -26,29 +25,32 @@ type responsesRequest struct {
 	Stream            bool                 `json:"stream"`
 	Tools             []responsesTool      `json:"tools,omitempty"`
 	ToolChoice        string               `json:"tool_choice"`
-	ParallelToolCalls bool                 `json:"parallel_tool_calls"`
+	ParallelToolCalls *bool                `json:"parallel_tool_calls,omitempty"`
+	MaxOutputTokens   int                  `json:"max_output_tokens,omitempty"`
 	Reasoning         *responsesReasoning  `json:"reasoning,omitempty"`
 	Store             bool                 `json:"store"`
 	Include           []string             `json:"include"`
 	PromptCacheKey    string               `json:"prompt_cache_key,omitempty"`
-	ClientMetadata    map[string]string    `json:"client_metadata,omitempty"`
+	Metadata          map[string]string    `json:"metadata,omitempty"`
 }
 
 type responsesReasoning struct {
-	Effort string `json:"effort,omitempty"`
+	Effort  string `json:"effort,omitempty"`
+	Summary string `json:"summary,omitempty"`
 }
 
 type responsesInputItem struct {
 	Type             string             `json:"type,omitempty"`
 	ID               string             `json:"id,omitempty"`
 	Role             string             `json:"role,omitempty"`
+	Phase            string             `json:"phase,omitempty"`
 	Content          []responsesContent `json:"content,omitempty"`
 	Summary          []responsesSummary `json:"summary,omitempty"`
 	EncryptedContent string             `json:"encrypted_content,omitempty"`
 	CallID           string             `json:"call_id,omitempty"`
 	Name             string             `json:"name,omitempty"`
 	Arguments        string             `json:"arguments,omitempty"`
-	Output           string             `json:"output,omitempty"`
+	Output           *string            `json:"output,omitempty"`
 }
 
 type responsesSummary struct {
@@ -60,9 +62,11 @@ type responsesContent struct {
 	Type     string `json:"type"`
 	Text     string `json:"text,omitempty"`
 	ImageURL string `json:"image_url,omitempty"`
+	Refusal  string `json:"refusal,omitempty"`
 }
 
 type responsesTool struct {
+	Strict      bool           `json:"strict"`
 	Type        string         `json:"type"`
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
@@ -70,6 +74,10 @@ type responsesTool struct {
 }
 
 type responsesResponse struct {
+	Status            string `json:"status,omitempty"`
+	IncompleteDetails *struct {
+		Reason string `json:"reason"`
+	} `json:"incomplete_details,omitempty"`
 	ID              string                `json:"id,omitempty"`
 	Model           string                `json:"model,omitempty"`
 	Headers         map[string]any        `json:"headers,omitempty"`
@@ -81,6 +89,8 @@ type responsesResponse struct {
 }
 
 type responsesOutputItem struct {
+	Role             string             `json:"role,omitempty"`
+	Phase            string             `json:"phase,omitempty"`
 	Type             string             `json:"type"`
 	ID               string             `json:"id,omitempty"`
 	CallID           string             `json:"call_id,omitempty"`
@@ -107,6 +117,11 @@ type responsesError struct {
 }
 
 type responsesStreamEnvelope struct {
+	OutputIndex     int                 `json:"output_index"`
+	ContentIndex    int                 `json:"content_index"`
+	SummaryIndex    int                 `json:"summary_index"`
+	Arguments       string              `json:"arguments"`
+	Text            string              `json:"text"`
 	Type            string              `json:"type"`
 	Delta           string              `json:"delta,omitempty"`
 	Item            responsesOutputItem `json:"item,omitempty"`
@@ -193,13 +208,24 @@ func (p OpenAICompatibleProvider) completeResponses(ctx context.Context, request
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return CompletionResult{}, fmt.Errorf("decode OpenAI Responses completion: %w", err)
 	}
-	if payload.Error != nil {
-		return CompletionResult{}, NewProviderError(providerErrorFromResponses(payload.Error, resp.StatusCode, responseRequestID(resp.Header)))
-	}
 	result := completionFromResponses(payload)
 	transportMetadata := responsesTransportMetadataFromHeaders(resp.Header)
 	result.Notices = responsesNotices(request.Model, payload, nil, transportMetadata)
 	result.EffectiveModel = effectiveResponsesModel(payload, nil, transportMetadata.ServerModel)
+	if payload.Error != nil {
+		return result, NewProviderError(providerErrorFromResponses(payload.Error, resp.StatusCode, responseRequestID(resp.Header)))
+	}
+	if payload.Status != "" && payload.Status != "completed" {
+		reason := ""
+		if payload.IncompleteDetails != nil {
+			reason = payload.IncompleteDetails.Reason
+		}
+		if failure := finishReasonFailure("openai-responses", reason); failure != nil {
+			return result, NewProviderError(*failure.ProviderError)
+		}
+		failure := streamFailure("openai-responses", "response_incomplete", "模型响应尚未完整结束，已保留收到的内容。", false)
+		return result, NewProviderError(*failure.ProviderError)
+	}
 	return result, nil
 }
 
@@ -220,22 +246,41 @@ func (p OpenAICompatibleProvider) responsesRequest(request ChatRequest, stream b
 	}
 	metadata, _ := responsesClientMetadata(request, p.ClientVersion)
 	body := responsesRequest{
-		Model:             request.Model,
-		Instructions:      instructions,
-		Input:             input,
-		Stream:            stream,
-		Tools:             responsesToolsFromProtocol(request.Tools),
-		ToolChoice:        toolChoice,
-		ParallelToolCalls: request.ParallelToolCalls,
-		Store:             request.Store,
-		Include:           include,
-		PromptCacheKey:    promptCacheKey,
-		ClientMetadata:    metadata,
+		Model:           request.Model,
+		Instructions:    instructions,
+		Input:           input,
+		Stream:          stream,
+		Tools:           responsesToolsFromProtocol(request.Tools),
+		ToolChoice:      toolChoice,
+		MaxOutputTokens: request.MaxOutputTokens,
+		Store:           request.Store,
+		Include:         include,
+		PromptCacheKey:  promptCacheKey,
+		Metadata:        responsesPublicMetadata(metadata),
+	}
+	if !request.OmitParallelToolCalls {
+		body.ParallelToolCalls = &request.ParallelToolCalls
 	}
 	if reasoning.Effort != "" {
-		body.Reasoning = &responsesReasoning{Effort: reasoning.Effort}
+		body.Reasoning = &responsesReasoning{Effort: reasoning.Effort, Summary: "auto"}
 	}
 	return body
+}
+
+// The public Responses API accepts metadata, not Codex's client_metadata body
+// extension. Keep the larger local turn context in its existing headers and
+// send only bounded identifiers as standard response metadata.
+func responsesPublicMetadata(metadata map[string]string) map[string]string {
+	result := make(map[string]string)
+	for key, value := range metadata {
+		if key != responsesTurnMetadataKey && len(key) <= 64 && len([]rune(value)) <= 512 {
+			result[key] = value
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 func responsesHeadersForRequest(request ChatRequest, clientVersion string) http.Header {
@@ -397,7 +442,12 @@ func (p OpenAICompatibleProvider) validateResponsesRequest(request ChatRequest) 
 func responsesInputFromProtocol(messages []Message) (string, []responsesInputItem) {
 	system := make([]string, 0, 2)
 	input := make([]responsesInputItem, 0, len(messages))
+	var toolImages []responsesInputItem
 	for _, message := range messages {
+		if message.Role != "tool" && len(toolImages) > 0 {
+			input = append(input, toolImages...)
+			toolImages = nil
+		}
 		switch message.Role {
 		case "system":
 			if text := strings.TrimSpace(message.Content); text != "" {
@@ -407,18 +457,24 @@ func responsesInputFromProtocol(messages []Message) (string, []responsesInputIte
 			input = append(input, responsesInputItem{
 				Type:   "function_call_output",
 				CallID: message.ToolCallID,
-				Output: message.Content,
+				Output: &message.Content,
 			})
 			if len(message.Attachments) > 0 {
 				content := []responsesContent{{Type: "input_text", Text: "Visual output from tool call " + message.ToolCallID}}
 				for _, attachment := range message.Attachments {
 					content = append(content, responsesContent{Type: "input_image", ImageURL: "data:" + attachment.MIMEType + ";base64," + attachment.Data})
 				}
-				input = append(input, responsesInputItem{Type: "message", Role: "user", Content: content})
+				toolImages = append(toolImages, responsesInputItem{Type: "message", Role: "user", Content: content})
 			}
 		default:
+			phase := ""
 			if message.Role == "assistant" {
-				input = append(input, responsesContinuationItems(message.Continuation)...)
+				replay, complete, replayPhase := responsesReplayForMessage(message)
+				input = append(input, replay...)
+				if complete {
+					continue
+				}
+				phase = replayPhase
 			}
 			contentType := "input_text"
 			if message.Role == "assistant" {
@@ -435,13 +491,10 @@ func responsesInputFromProtocol(messages []Message) (string, []responsesInputIte
 				})
 			}
 			if len(content) > 0 {
-				input = append(input, responsesInputItem{Type: "message", Role: message.Role, Content: content})
+				input = append(input, responsesInputItem{Type: "message", Role: message.Role, Phase: phase, Content: content})
 			}
 			for _, call := range message.ToolCalls {
-				arguments := strings.TrimSpace(string(call.Function.Arguments))
-				if arguments == "" {
-					arguments = "{}"
-				}
+				arguments := toolCallArgumentsString(call.Function.Arguments)
 				input = append(input, responsesInputItem{
 					Type:      "function_call",
 					CallID:    call.ID,
@@ -451,6 +504,7 @@ func responsesInputFromProtocol(messages []Message) (string, []responsesInputIte
 			}
 		}
 	}
+	input = append(input, toolImages...)
 	return strings.Join(system, "\n\n"), input
 }
 
@@ -474,11 +528,136 @@ func parseResponsesStream(
 	requestedModel string,
 	transport responsesTransportMetadata,
 ) {
-	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	toolCalls := make(map[string]ToolCall)
+	scanner := newSSEReader(body)
+	items := make(map[int]responsesOutputItem)
+	textBlocks := make(map[string]string)
+	reasoningBlocks := make(map[string]string)
 	noticesSeen := make(map[string]bool)
 	lastServerModel := ""
+	emitText := func(kind, key, text string, complete bool) {
+		if text == "" {
+			return
+		}
+		blocks := textBlocks
+		if kind == "reasoning" {
+			blocks = reasoningBlocks
+		}
+		previous, exists := blocks[key]
+		if complete {
+			if !strings.HasPrefix(text, previous) {
+				return
+			}
+			text = strings.TrimPrefix(text, previous)
+		}
+		if text == "" {
+			return
+		}
+		if kind == "reasoning" && !exists && len(blocks) > 0 {
+			events <- StreamEvent{Type: kind, Delta: "\n\n"}
+		}
+		blocks[key] = previous + text
+		events <- StreamEvent{Type: kind, Delta: text}
+	}
+	rememberItem := func(index int, item responsesOutputItem) {
+		old := items[index]
+		if item.ID == "" {
+			item.ID = old.ID
+		}
+		if item.Role == "" {
+			item.Role = old.Role
+		}
+		if item.Phase == "" {
+			item.Phase = old.Phase
+		}
+		if item.Type == "" {
+			item.Type = old.Type
+		}
+		if item.Name == "" {
+			item.Name = old.Name
+		}
+		if item.CallID == "" {
+			item.CallID = old.CallID
+		}
+		if item.Arguments == "" {
+			item.Arguments = old.Arguments
+		}
+		if item.EncryptedContent == "" {
+			item.EncryptedContent = old.EncryptedContent
+		}
+		if item.Summary == nil {
+			item.Summary = old.Summary
+		}
+		if item.Content == nil {
+			item.Content = old.Content
+		}
+		items[index] = item
+		for partIndex, content := range item.Content {
+			if item.Type == "reasoning" || content.Type == "reasoning_text" {
+				emitText("reasoning", fmt.Sprintf("content:%d:%d", index, partIndex), content.Text, true)
+				continue
+			}
+			if item.Type != "message" {
+				continue
+			}
+			value := content.Text
+			if content.Type == "refusal" {
+				value = content.Refusal
+			}
+			emitText("delta", fmt.Sprintf("%d:%d", index, partIndex), value, true)
+		}
+		for partIndex, summary := range item.Summary {
+			emitText("reasoning", fmt.Sprintf("summary:%d:%d", index, partIndex), summary.Text, true)
+		}
+	}
+	finish := func(response responsesResponse, failed bool) {
+		for index, item := range response.Output {
+			rememberItem(index, item)
+		}
+		indices := make([]int, 0, len(items))
+		for index := range items {
+			indices = append(indices, index)
+		}
+		sort.Ints(indices)
+		response.Output = make([]responsesOutputItem, 0, len(indices))
+		for _, index := range indices {
+			response.Output = append(response.Output, items[index])
+		}
+		completion := completionFromResponses(response)
+		if completion.Usage != nil {
+			events <- StreamEvent{Type: "usage", Usage: completion.Usage}
+		}
+		if response.Error != nil {
+			info := providerErrorFromResponses(response.Error, transport.HTTPStatus, transport.RequestID)
+			events <- StreamEvent{Type: "error", Error: info.Message, ProviderError: &info}
+			return
+		}
+		if failed || (response.Status != "" && response.Status != "completed") {
+			reason := ""
+			if response.IncompleteDetails != nil {
+				reason = response.IncompleteDetails.Reason
+			}
+			if failure := finishReasonFailure("openai-responses", reason); failure != nil {
+				events <- *failure
+			} else {
+				events <- streamFailure("openai-responses", "response_incomplete", "模型响应尚未完整结束，已保留收到的内容。", false)
+			}
+			return
+		}
+		for _, item := range response.Output {
+			if item.Type == "function_call" && (item.Name == "" || (item.CallID == "" && item.ID == "")) {
+				events <- streamFailure("openai-responses", "invalid_tool_call", "上游工具调用缺少名称或调用 ID。", false)
+				return
+			}
+		}
+		if len(completion.ToolCalls) > 0 {
+			events <- StreamEvent{Type: "tool_calls", ToolCalls: completion.ToolCalls}
+		}
+		if completion.Continuation != nil {
+			events <- StreamEvent{Type: "continuation", Continuation: completion.Continuation}
+		}
+		events <- StreamEvent{Type: "finish", FinishReason: "stop"}
+		events <- StreamEvent{Type: "done"}
+	}
 	emitServerModel := func(model string) {
 		model = strings.TrimSpace(model)
 		if model == "" || strings.EqualFold(model, lastServerModel) {
@@ -500,30 +679,32 @@ func parseResponsesStream(
 	for _, notice := range responsesNotices(requestedModel, responsesResponse{}, nil, transport) {
 		emitNotice(notice)
 	}
-	for scanner.Scan() {
+	for {
+		frame, ok := scanner.Next()
+		if !ok {
+			break
+		}
 		select {
 		case <-ctx.Done():
 			events <- StreamEvent{Type: "error", Error: ctx.Err().Error()}
 			return
 		default:
 		}
-		line := strings.TrimSpace(scanner.Text())
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		payload := strings.TrimSpace(frame.Data)
 		if payload == "" {
 			continue
 		}
 		if payload == "[DONE]" {
-			emitResponsesToolCalls(events, toolCalls)
-			events <- StreamEvent{Type: "done"}
+			finish(responsesResponse{}, false)
 			return
 		}
 		var envelope responsesStreamEnvelope
 		if err := json.Unmarshal([]byte(payload), &envelope); err != nil {
 			events <- StreamEvent{Type: "error", Error: "decode OpenAI Responses stream: " + err.Error()}
 			return
+		}
+		if envelope.Type == "" {
+			envelope.Type = frame.Type
 		}
 		effectiveModel := effectiveResponsesModel(envelope.Response, &envelope, transport.ServerModel)
 		emitServerModel(effectiveModel)
@@ -532,29 +713,41 @@ func parseResponsesStream(
 		}
 		switch envelope.Type {
 		case "response.output_text.delta":
-			if envelope.Delta != "" {
-				events <- StreamEvent{Type: "delta", Delta: envelope.Delta}
-			}
+			emitText("delta", fmt.Sprintf("%d:%d", envelope.OutputIndex, envelope.ContentIndex), envelope.Delta, false)
+		case "response.output_text.done":
+			emitText("delta", fmt.Sprintf("%d:%d", envelope.OutputIndex, envelope.ContentIndex), envelope.Text, true)
+		case "response.refusal.delta":
+			emitText("delta", fmt.Sprintf("%d:%d", envelope.OutputIndex, envelope.ContentIndex), envelope.Delta, false)
+		case "response.reasoning_summary_text.delta":
+			emitText("reasoning", fmt.Sprintf("summary:%d:%d", envelope.OutputIndex, envelope.SummaryIndex), envelope.Delta, false)
+		case "response.reasoning_summary_text.done":
+			emitText("reasoning", fmt.Sprintf("summary:%d:%d", envelope.OutputIndex, envelope.SummaryIndex), envelope.Text, true)
+		case "response.reasoning_text.delta":
+			emitText("reasoning", fmt.Sprintf("content:%d:%d", envelope.OutputIndex, envelope.ContentIndex), envelope.Delta, false)
+		case "response.reasoning_text.done":
+			emitText("reasoning", fmt.Sprintf("content:%d:%d", envelope.OutputIndex, envelope.ContentIndex), envelope.Text, true)
+		case "response.output_item.added":
+			rememberItem(envelope.OutputIndex, envelope.Item)
 		case "response.output_item.done":
-			if call, ok := toolCallFromResponsesItem(envelope.Item); ok {
-				toolCalls[call.ID] = call
-			}
+			rememberItem(envelope.OutputIndex, envelope.Item)
+		case "response.function_call_arguments.delta":
+			item := items[envelope.OutputIndex]
+			item.Arguments += envelope.Delta
+			items[envelope.OutputIndex] = item
+		case "response.function_call_arguments.done":
+			item := items[envelope.OutputIndex]
+			item.Arguments = envelope.Arguments
+			items[envelope.OutputIndex] = item
 		case "response.completed":
-			completion := completionFromResponses(envelope.Response)
-			for _, call := range completion.ToolCalls {
-				toolCalls[call.ID] = call
-			}
-			emitResponsesToolCalls(events, toolCalls)
-			if completion.Usage != nil {
-				events <- StreamEvent{Type: "usage", Usage: completion.Usage}
-			}
-			if completion.Continuation != nil {
-				events <- StreamEvent{Type: "continuation", Continuation: completion.Continuation}
-			}
-			events <- StreamEvent{Type: "finish", FinishReason: "stop"}
-			events <- StreamEvent{Type: "done"}
+			finish(envelope.Response, false)
+			return
+		case "response.incomplete":
+			finish(envelope.Response, true)
 			return
 		case "response.failed", "error":
+			if completion := completionFromResponses(envelope.Response); completion.Usage != nil {
+				events <- StreamEvent{Type: "usage", Usage: completion.Usage}
+			}
 			responseError := envelope.Error
 			if responseError == nil {
 				responseError = envelope.Response.Error
@@ -568,8 +761,7 @@ func parseResponsesStream(
 		events <- StreamEvent{Type: "error", Error: "read OpenAI Responses stream: " + err.Error()}
 		return
 	}
-	emitResponsesToolCalls(events, toolCalls)
-	events <- StreamEvent{Type: "done"}
+	events <- interruptedStream("openai-responses")
 }
 
 func responsesTransportMetadataFromHeaders(headers http.Header) responsesTransportMetadata {
@@ -807,7 +999,7 @@ func providerErrorRetryable(code, errorType string, status int) bool {
 	if isNonRetryableProviderErrorCode(code) {
 		return false
 	}
-	if status > 0 {
+	if status >= 400 {
 		return shouldRetryOpenAICompatibleStatus(status)
 	}
 	for _, value := range []string{code, errorType} {
@@ -822,15 +1014,27 @@ func providerErrorRetryable(code, errorType string, status int) bool {
 func completionFromResponses(response responsesResponse) CompletionResult {
 	result := CompletionResult{EffectiveModel: effectiveResponsesModel(response, nil, "")}
 	var text strings.Builder
-	reasoningItems := make([]responsesInputItem, 0, 2)
+	var reasoning []string
+	replayItems := make([]responsesInputItem, 0, len(response.Output))
 	for _, item := range response.Output {
+		if item.Type == "reasoning" || item.Type == "message" || item.Type == "function_call" {
+			role := item.Role
+			if item.Type == "message" && role == "" {
+				role = "assistant"
+			}
+			replayItems = append(replayItems, responsesInputItem{Type: item.Type, ID: item.ID, Role: role, Phase: item.Phase, Content: item.Content, Summary: item.Summary, EncryptedContent: item.EncryptedContent, CallID: item.CallID, Name: item.Name, Arguments: item.Arguments})
+		}
 		if item.Type == "reasoning" {
-			reasoningItems = append(reasoningItems, responsesInputItem{
-				Type:             item.Type,
-				ID:               item.ID,
-				Summary:          item.Summary,
-				EncryptedContent: item.EncryptedContent,
-			})
+			for _, content := range item.Content {
+				if content.Text != "" {
+					reasoning = append(reasoning, content.Text)
+				}
+			}
+			for _, summary := range item.Summary {
+				if summary.Text != "" {
+					reasoning = append(reasoning, summary.Text)
+				}
+			}
 			continue
 		}
 		if call, ok := toolCallFromResponsesItem(item); ok {
@@ -841,14 +1045,18 @@ func completionFromResponses(response responsesResponse) CompletionResult {
 			continue
 		}
 		for _, content := range item.Content {
+			if content.Type == "refusal" {
+				text.WriteString(content.Refusal)
+			}
 			if content.Type == "output_text" || content.Type == "text" {
 				text.WriteString(content.Text)
 			}
 		}
 	}
 	result.Content = text.String()
-	if len(result.ToolCalls) > 0 && len(reasoningItems) > 0 {
-		if encoded, err := json.Marshal(reasoningItems); err == nil {
+	result.Reasoning = strings.Join(reasoning, "\n\n")
+	if len(result.ToolCalls) > 0 && len(replayItems) > 0 {
+		if encoded, err := json.Marshal(responsesReplayState{Version: 1, Items: replayItems}); err == nil {
 			result.Continuation = &ProviderContinuation{Protocol: "openai-responses", Data: encoded}
 		}
 	}
@@ -873,11 +1081,80 @@ func responsesContinuationItems(continuation *ProviderContinuation) []responsesI
 	if continuation == nil || continuation.Protocol != "openai-responses" || len(continuation.Data) == 0 {
 		return nil
 	}
-	var items []responsesInputItem
-	if json.Unmarshal(continuation.Data, &items) != nil {
-		return nil
+	var state responsesReplayState
+	if json.Unmarshal(continuation.Data, &state) == nil && state.Version == 1 {
+		return state.Items
 	}
-	return items
+	var legacy []responsesInputItem
+	if json.Unmarshal(continuation.Data, &legacy) == nil {
+		return legacy
+	}
+	return nil
+}
+
+type responsesReplayState struct {
+	Version int                  `json:"version"`
+	Items   []responsesInputItem `json:"items"`
+}
+
+func responsesReplayForMessage(message Message) ([]responsesInputItem, bool, string) {
+	items := responsesContinuationItems(message.Continuation)
+	var state responsesReplayState
+	if message.Continuation == nil || json.Unmarshal(message.Continuation.Data, &state) != nil || state.Version != 1 {
+		return items, false, ""
+	}
+	var text strings.Builder
+	var calls []responsesInputItem
+	phase := ""
+	reasoning := make([]responsesInputItem, 0)
+	for _, item := range items {
+		switch item.Type {
+		case "reasoning":
+			reasoning = append(reasoning, item)
+		case "function_call":
+			calls = append(calls, item)
+		case "message":
+			if item.Phase != "" {
+				phase = item.Phase
+			}
+			for _, part := range item.Content {
+				if part.Type == "refusal" {
+					text.WriteString(part.Refusal)
+				} else {
+					text.WriteString(part.Text)
+				}
+			}
+		}
+	}
+	complete := strings.TrimSpace(text.String()) == strings.TrimSpace(message.Content) && len(calls) == len(message.ToolCalls)
+	for index, call := range calls {
+		if !complete {
+			break
+		}
+		expected := message.ToolCalls[index]
+		complete = call.CallID == expected.ID && call.Name == expected.Function.Name && strings.TrimSpace(call.Arguments) == strings.TrimSpace(toolCallArgumentsString(expected.Function.Arguments))
+	}
+	if complete {
+		return items, true, phase
+	}
+	// Context clipping may have shortened visible text. Preserve opaque
+	// reasoning and phase, while rebuilding the clipped text/tool messages.
+	return reasoning, false, phase
+}
+
+func (item responsesInputItem) MarshalJSON() ([]byte, error) {
+	type alias responsesInputItem
+	if item.Type == "reasoning" {
+		summary := item.Summary
+		if summary == nil {
+			summary = []responsesSummary{}
+		}
+		return json.Marshal(struct {
+			alias
+			Summary []responsesSummary `json:"summary"`
+		}{alias(item), summary})
+	}
+	return json.Marshal(alias(item))
 }
 
 func toolCallFromResponsesItem(item responsesOutputItem) (ToolCall, bool) {
@@ -889,7 +1166,7 @@ func toolCallFromResponsesItem(item responsesOutputItem) (ToolCall, bool) {
 		callID = strings.TrimSpace(item.ID)
 	}
 	arguments := strings.TrimSpace(item.Arguments)
-	if arguments == "" || !json.Valid([]byte(arguments)) {
+	if arguments == "" {
 		arguments = "{}"
 	}
 	return ToolCall{
@@ -897,23 +1174,7 @@ func toolCallFromResponsesItem(item responsesOutputItem) (ToolCall, bool) {
 		Type: "function",
 		Function: ToolCallFunction{
 			Name:      item.Name,
-			Arguments: json.RawMessage(arguments),
+			Arguments: preserveToolArguments(arguments),
 		},
 	}, true
-}
-
-func emitResponsesToolCalls(events chan<- StreamEvent, calls map[string]ToolCall) {
-	if len(calls) == 0 {
-		return
-	}
-	ordered := make([]ToolCall, 0, len(calls))
-	ids := make([]string, 0, len(calls))
-	for id := range calls {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		ordered = append(ordered, calls[id])
-	}
-	events <- StreamEvent{Type: "tool_calls", ToolCalls: ordered}
 }

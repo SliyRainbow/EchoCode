@@ -1,4 +1,5 @@
 import { Download, Maximize2, Minimize2, X } from "lucide-solid";
+import { Dialog } from "@kobalte/core/dialog";
 import { createSignal, onCleanup, onMount } from "solid-js";
 import type { ChatAttachment } from "../types";
 
@@ -9,7 +10,6 @@ export function ImagePreviewModal(props: {
   const [actualSize, setActualSize] = createSignal(false);
   const [dimensions, setDimensions] = createSignal("");
   const [fitSize, setFitSize] = createSignal({ width: 0, height: 0 });
-  let dialogRef: HTMLElement | undefined;
   let stageRef: HTMLDivElement | undefined;
   let naturalWidth = 0;
   let naturalHeight = 0;
@@ -27,43 +27,22 @@ export function ImagePreviewModal(props: {
   };
 
   onMount(() => {
-    const previousOverflow = document.body.style.overflow;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        props.onClose();
-      }
-    };
-
-    document.body.style.overflow = "hidden";
-    window.addEventListener("keydown", handleKeyDown);
     const resizeObserver = new ResizeObserver(updateFitSize);
     if (stageRef) resizeObserver.observe(stageRef);
-    queueMicrotask(() => dialogRef?.focus());
-
-    onCleanup(() => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener("keydown", handleKeyDown);
-      resizeObserver.disconnect();
-    });
+    onCleanup(() => resizeObserver.disconnect());
   });
 
   return (
-    <div
-      class="image-viewer-overlay"
-      role="presentation"
-      onPointerDown={(event) => {
-        if (event.currentTarget === event.target) props.onClose();
-      }}
-    >
-      <section
-        ref={dialogRef}
+    <Dialog open onOpenChange={(open) => { if (!open) props.onClose(); }}>
+      <Dialog.Portal>
+        <Dialog.Overlay class="ui-modal-backdrop" />
+        <div class="ui-modal-positioner image-preview-positioner">
+      <Dialog.Content
         class="image-viewer-dialog"
-        role="dialog"
-        aria-modal="true"
         aria-label={`查看图片 ${props.attachment.name}`}
-        tabIndex={-1}
       >
+        <Dialog.Title class="sr-only">查看图片 {props.attachment.name}</Dialog.Title>
+        <Dialog.Description class="sr-only">可以切换原始尺寸、下载图片，或按 Escape 关闭。</Dialog.Description>
         <header class="image-viewer-head">
           <div class="image-viewer-meta">
             <strong title={props.attachment.name}>{props.attachment.name}</strong>
@@ -108,7 +87,9 @@ export function ImagePreviewModal(props: {
             />
           </div>
         </div>
-      </section>
-    </div>
+      </Dialog.Content>
+        </div>
+      </Dialog.Portal>
+    </Dialog>
   );
 }

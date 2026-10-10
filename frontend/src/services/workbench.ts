@@ -1,5 +1,6 @@
 import { defaultReasoningLevel, reasoningOptions } from "../state/reasoning";
 import { defaultTeamSettings } from "../team-config";
+import type { ContextCompressionResult } from "../types";
 import type { AppInfo, AutomationState, AutomationTask, ChatAttachment, ChatResult, ChatTaskEvent, ChatTaskState, ApprovalRequest, BranchInfo, BrowserFrame, BrowserInspector, BrowserPreview, BrowserState, CheckpointInfo, ExtensionActionResult, ExtensionCatalogState, ExtensionOperationResult, GitDiff, GitStatus, MessagePart, OpenSourceLicense, ProjectInfo, ProjectNode, SecretResultReveal, SessionInfo, SessionMessage, ReasoningLevel, RuntimeSettings, ServerSnapshot, SkillDetail, SkillImportResult, SkillIndexEntry, TerminalSessionState, UpdateState, UsageBillingReconciliationInput, UsageBillingReport, UsageBillingSyncInput, WorkbenchState, WorkspaceDirectoryListing, WorkspaceFilePreview } from "../types";
 
 type WailsAppBinding = {
@@ -26,6 +27,7 @@ type WailsAppBinding = {
   GetActiveChatTasks?: () => Promise<ChatTaskState[]>;
 	RevealSecretResult?: (projectID: string, sessionID: string, secretID: string) => Promise<SecretResultReveal>;
   ResetDeepSeekSession: () => Promise<WorkbenchState>;
+  CompressSessionContext?: (projectID: string, sessionID: string) => Promise<ContextCompressionResult>;
   SaveRuntimeSettings: (settings: RuntimeSettings) => Promise<WorkbenchState>;
   GetAppInfo?: () => Promise<AppInfo>;
   GetOpenSourceLicenses?: () => Promise<OpenSourceLicense[]>;
@@ -606,7 +608,7 @@ export function onMCPState(handler: (state: WorkbenchState) => void): () => void
 
 const fallbackAppInfo: AppInfo = {
   name: "EchoCode",
-  version: "0.3.19",
+  version: "0.3.21",
   goVersion: "浏览器预览",
   operatingSystem: "web",
   architecture: "preview",
@@ -767,6 +769,12 @@ function previewFileParts(prompt: string, content: string): MessagePart[] | unde
     { kind: "file", path: "preview.html", lineCount: 18, created: true },
     { kind: "text", text: content },
   ];
+}
+
+export async function compressSessionContext(projectID: string, sessionID: string): Promise<ContextCompressionResult> {
+  const binding = wailsBinding();
+  if (!binding?.CompressSessionContext) throw new Error("上下文压缩需要运行新版桌面程序");
+  return binding.CompressSessionContext(projectID, sessionID);
 }
 
 export async function resetDeepSeekSession(): Promise<WorkbenchState> {
@@ -1169,6 +1177,11 @@ function cloneExtensionCatalog(state: ExtensionCatalogState): ExtensionCatalogSt
 	return JSON.parse(JSON.stringify(state)) as ExtensionCatalogState;
 }
 
+export function timelineAvailable(): boolean {
+  const binding = wailsBinding();
+  return Boolean(binding?.ListCheckpoints && binding?.ListBranches && binding?.RewindToCheckpoint && binding?.SwitchBranch);
+}
+
 // 列出当前会话的可回退检查点。浏览器预览模式返回空列表。
 export async function listCheckpoints(): Promise<CheckpointInfo[]> {
   const binding = wailsBinding();
@@ -1178,13 +1191,13 @@ export async function listCheckpoints(): Promise<CheckpointInfo[]> {
   return [];
 }
 
-// 回退到指定检查点：对话与文件一起回退。预览模式下无操作，返回当前状态。
+// 回退到指定检查点：对话与文件一起回退。
 export async function rewindToCheckpoint(checkpointID: string): Promise<WorkbenchState> {
   const binding = wailsBinding();
   if (binding?.RewindToCheckpoint) {
     return binding.RewindToCheckpoint(checkpointID);
   }
-  return cloneState(fallbackState);
+  throw new Error("回退时间线仅在 EchoCode 桌面应用中可用。");
 }
 
 // 列出所有对话线（分支）。预览模式返回空列表。
@@ -1196,13 +1209,13 @@ export async function listBranches(): Promise<BranchInfo[]> {
   return [];
 }
 
-// 切换到另一条对话线：文件与对话一起切换。预览模式无操作。
+// 切换到另一条对话线：文件与对话一起切换。
 export async function switchBranch(leafID: string): Promise<WorkbenchState> {
   const binding = wailsBinding();
   if (binding?.SwitchBranch) {
     return binding.SwitchBranch(leafID);
   }
-  return cloneState(fallbackState);
+  throw new Error("对话分支切换仅在 EchoCode 桌面应用中可用。");
 }
 
 // 从历史消息创建新分支，旧分支仍保留在事件树中。
@@ -1852,7 +1865,7 @@ function createFallbackState(level: ReasoningLevel): WorkbenchState {
         transport: "builtin",
         state: "ready",
         message: "内置工具由 EchoCode 运行时提供",
-        toolCount: 4,
+        toolCount: fallbackSnapshots.find((snapshot) => snapshot.server === "builtin")?.tools.length ?? 0,
       },
     ],
 		plugins: [

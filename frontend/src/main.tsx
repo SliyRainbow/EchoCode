@@ -1,8 +1,5 @@
 import { render } from "solid-js/web";
-import App from "./app";
-import "./styles.css";
-import "highlight.js/styles/github-dark.css";
-import "./styles/chat.css";
-import "./styles/polish.css";
+import { AppRoot } from "./AppRoot";
+import "./styles/index.css";
 
-render(() => <App />, document.getElementById("root") as HTMLElement);
+render(() => <AppRoot />, document.getElementById("root") as HTMLElement);

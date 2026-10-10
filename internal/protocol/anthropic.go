@@ -1,7 +1,6 @@
 package protocol
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -179,8 +178,12 @@ func (p AnthropicProvider) Complete(ctx context.Context, request ChatRequest) (C
 		return CompletionResult{}, fmt.Errorf("decode Anthropic completion: %w", err)
 	}
 	result := anthropicCompletionFromBlocks(payload.Content)
+	result.EffectiveModel = payload.Model
 	if payload.Usage != nil {
 		result.Usage = payload.Usage.toTokenUsage()
+	}
+	if failure := finishReasonFailure("anthropic", payload.StopReason); failure != nil {
+		return result, NewProviderError(*failure.ProviderError)
 	}
 	return result, nil
 }
@@ -248,6 +251,26 @@ func (p AnthropicProvider) sendMessagesRequest(ctx context.Context, request Chat
 		Temperature: temperature,
 		Tools:       anthropicToolsFromProtocol(request.Tools),
 	}
+	if len(request.Tools) > 0 || request.ToolChoice == "none" {
+		choice := request.ToolChoice
+		if choice == "" {
+			choice = "auto"
+		}
+		if choice == "required" {
+			choice = "any"
+		}
+		// Manual extended thinking only permits auto/none. Native adaptive
+		// models may support forced calls; let their normal error feedback
+		// drive the host's existing compatibility fallback when they do not.
+		if choice == "any" && reasoning.Mode == "enabled" {
+			choice = "auto"
+		}
+		body.ToolChoice = &anthropicToolChoice{Type: choice}
+		if choice != "none" && !request.OmitParallelToolCalls {
+			disabled := !request.ParallelToolCalls
+			body.ToolChoice.DisableParallelToolUse = &disabled
+		}
+	}
 	applyAnthropicReasoning(&body, reasoning)
 	applyAnthropicUnsupportedParameters(&body, unsupported)
 	sent := map[string]bool{
@@ -259,7 +282,7 @@ func (p AnthropicProvider) sendMessagesRequest(ctx context.Context, request Chat
 	if err != nil {
 		return nil, sent, err
 	}
-	encoded, err = mergeExtraJSONBody(encoded, p.ExtraBodyJSON, protectedBodyKeys("model", "max_tokens", "messages", "output_config", "system", "temperature", "thinking", "stream", "tools"))
+	encoded, err = mergeExtraJSONBody(encoded, p.ExtraBodyJSON, protectedBodyKeys("model", "max_tokens", "messages", "output_config", "system", "temperature", "thinking", "stream", "tools", "tool_choice"))
 	if err != nil {
 		return nil, sent, err
 	}
@@ -343,11 +366,17 @@ func anthropicMessagesFromProtocol(messages []Message) (string, []anthropicMessa
 				}
 				toolContent = blocks
 			}
-			converted = append(converted, anthropicMessage{Role: "user", Content: []anthropicContentBlock{{
+			blocks := []anthropicContentBlock{{
 				Type:      "tool_result",
 				ToolUseID: message.ToolCallID,
 				Content:   toolContent,
-			}}})
+				IsError:   message.ToolError,
+			}}
+			if len(converted) > 0 && converted[len(converted)-1].Role == "user" && len(converted[len(converted)-1].Content) > 0 && converted[len(converted)-1].Content[0].Type == "tool_result" {
+				converted[len(converted)-1].Content = append(converted[len(converted)-1].Content, blocks...)
+			} else {
+				converted = append(converted, anthropicMessage{Role: "user", Content: blocks})
+			}
 		default:
 			if content != "" || len(message.Attachments) > 0 {
 				blocks := make([]anthropicContentBlock, 0, len(message.Attachments)+1)
@@ -433,7 +462,7 @@ func normalizedJSONObject(raw json.RawMessage) json.RawMessage {
 		return json.RawMessage(`{}`)
 	}
 	var object map[string]any
-	if json.Unmarshal(raw, &object) != nil {
+	if json.Unmarshal([]byte(toolCallArgumentsString(raw)), &object) != nil || object == nil {
 		return json.RawMessage(`{}`)
 	}
 	encoded, _ := json.Marshal(object)
@@ -441,11 +470,16 @@ func normalizedJSONObject(raw json.RawMessage) json.RawMessage {
 }
 
 func parseAnthropicStream(ctx context.Context, body io.Reader, events chan<- StreamEvent) {
-	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	scanner := newSSEReader(body)
 	toolUses := map[int]*anthropicToolUseAccumulator{}
 	thinkingBlocks := map[int]*anthropicContentBlock{}
-	for scanner.Scan() {
+	cumulativeUsage := anthropicUsage{}
+	stopReason := ""
+	for {
+		frame, ok := scanner.Next()
+		if !ok {
+			break
+		}
 		select {
 		case <-ctx.Done():
 			events <- StreamEvent{Type: "error", Error: "读取 Anthropic 流式响应被中断：请求上下文已取消或超时。"}
@@ -453,11 +487,7 @@ func parseAnthropicStream(ctx context.Context, body io.Reader, events chan<- Str
 		default:
 		}
 
-		line := strings.TrimSpace(scanner.Text())
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		payload := strings.TrimSpace(frame.Data)
 		if payload == "" || payload == "[DONE]" {
 			continue
 		}
@@ -467,11 +497,20 @@ func parseAnthropicStream(ctx context.Context, body io.Reader, events chan<- Str
 			events <- StreamEvent{Type: "error", Error: "无法解析 Anthropic 流式响应: " + err.Error()}
 			return
 		}
+		if chunk.Type == "" {
+			chunk.Type = frame.Type
+		}
 		switch chunk.Type {
 		case "content_block_start":
+			if chunk.ContentBlock.Type == "text" && chunk.ContentBlock.Text != "" {
+				events <- StreamEvent{Type: "delta", Delta: chunk.ContentBlock.Text}
+			}
 			if chunk.ContentBlock.Type == "thinking" || chunk.ContentBlock.Type == "redacted_thinking" {
 				block := chunk.ContentBlock
 				thinkingBlocks[chunk.Index] = &block
+				if block.Type == "thinking" && block.Thinking != "" {
+					events <- StreamEvent{Type: "reasoning", Delta: block.Thinking}
+				}
 			}
 			if chunk.ContentBlock.Type == "tool_use" {
 				toolUses[chunk.Index] = &anthropicToolUseAccumulator{
@@ -502,9 +541,9 @@ func parseAnthropicStream(ctx context.Context, body io.Reader, events chan<- Str
 			}
 		case "content_block_stop":
 			if accumulator := toolUses[chunk.Index]; accumulator != nil {
-				arguments := normalizedJSONObject(accumulator.Input)
+				arguments := preserveToolArguments(string(accumulator.Input))
 				if partial := strings.TrimSpace(accumulator.PartialJSON.String()); partial != "" {
-					arguments = normalizedJSONObject(json.RawMessage(partial))
+					arguments = preserveToolArguments(partial)
 				}
 				id := strings.TrimSpace(accumulator.ID)
 				if id == "" {
@@ -521,21 +560,36 @@ func parseAnthropicStream(ctx context.Context, body io.Reader, events chan<- Str
 				delete(toolUses, chunk.Index)
 			}
 		case "message_start":
+			if chunk.Message != nil && chunk.Message.Model != "" {
+				events <- StreamEvent{Type: "server_model", Delta: chunk.Message.Model}
+			}
 			if chunk.Message != nil && chunk.Message.Usage != nil {
-				events <- StreamEvent{Type: "usage", Usage: chunk.Message.Usage.toTokenUsage()}
+				cumulativeUsage.merge(chunk.Message.Usage)
+				events <- StreamEvent{Type: "usage", Usage: cumulativeUsage.toTokenUsage()}
 			}
 		case "message_delta":
+			if chunk.Delta.StopReason != "" {
+				stopReason = chunk.Delta.StopReason
+			}
 			if chunk.Usage != nil {
-				events <- StreamEvent{Type: "usage", Usage: chunk.Usage.toTokenUsage()}
+				cumulativeUsage.merge(chunk.Usage)
+				events <- StreamEvent{Type: "usage", Usage: cumulativeUsage.toTokenUsage()}
 			}
 		case "error":
-			if chunk.Error.Message != "" {
-				events <- StreamEvent{Type: "error", Error: chunk.Error.Message}
-				return
-			}
+			info := providerErrorFromUpstream("anthropic", &chunk.Error, 0, "")
+			events <- StreamEvent{Type: "error", Error: info.Message, ProviderError: &info}
+			return
 		case "message_stop":
 			if continuation := anthropicStreamContinuation(thinkingBlocks); continuation != nil {
 				events <- StreamEvent{Type: "continuation", Continuation: continuation}
+			}
+			if failure := finishReasonFailure("anthropic", stopReason); failure != nil {
+				events <- *failure
+				return
+			}
+			if len(toolUses) > 0 {
+				events <- interruptedStream("anthropic")
+				return
 			}
 			events <- StreamEvent{Type: "done"}
 			return
@@ -545,7 +599,7 @@ func parseAnthropicStream(ctx context.Context, body io.Reader, events chan<- Str
 		events <- StreamEvent{Type: "error", Error: "读取 Anthropic 流式响应失败: " + err.Error()}
 		return
 	}
-	events <- StreamEvent{Type: "done"}
+	events <- interruptedStream("anthropic")
 }
 
 func anthropicStreamContinuation(blocks map[int]*anthropicContentBlock) *ProviderContinuation {
@@ -579,10 +633,9 @@ func readAnthropicAPIError(resp *http.Response) (error, string) {
 	if detail == "" {
 		detail = strings.TrimSpace(string(body))
 	}
-	if detail == "" {
-		return fmt.Errorf("Anthropic request failed (HTTP %d)", resp.StatusCode), ""
-	}
-	return fmt.Errorf("Anthropic request failed: %s (HTTP %d)", detail, resp.StatusCode), detail
+	payload := upstreamError{Type: envelope.Error.Type, Message: detail}
+	info := providerErrorFromUpstream("anthropic", &payload, resp.StatusCode, responseRequestID(resp.Header))
+	return NewProviderError(info), detail
 }
 
 type anthropicModelsResponse struct {
@@ -620,6 +673,7 @@ type anthropicReportedModelCapabilities struct {
 }
 
 type anthropicMessagesRequest struct {
+	ToolChoice   *anthropicToolChoice   `json:"tool_choice,omitempty"`
 	Model        string                 `json:"model"`
 	MaxTokens    int                    `json:"max_tokens"`
 	System       string                 `json:"system,omitempty"`
@@ -629,6 +683,11 @@ type anthropicMessagesRequest struct {
 	Tools        []anthropicTool        `json:"tools,omitempty"`
 	Thinking     *anthropicThinking     `json:"thinking,omitempty"`
 	OutputConfig *anthropicOutputConfig `json:"output_config,omitempty"`
+}
+
+type anthropicToolChoice struct {
+	Type                   string `json:"type"`
+	DisableParallelToolUse *bool  `json:"disable_parallel_tool_use,omitempty"`
 }
 
 type anthropicThinking struct {
@@ -646,6 +705,7 @@ type anthropicMessage struct {
 }
 
 type anthropicContentBlock struct {
+	IsError   bool                  `json:"is_error,omitempty"`
 	Type      string                `json:"type"`
 	Text      string                `json:"text,omitempty"`
 	Thinking  string                `json:"thinking,omitempty"`
@@ -657,6 +717,21 @@ type anthropicContentBlock struct {
 	ToolUseID string                `json:"tool_use_id,omitempty"`
 	Content   any                   `json:"content,omitempty"`
 	Source    *anthropicImageSource `json:"source,omitempty"`
+}
+
+func (block anthropicContentBlock) MarshalJSON() ([]byte, error) {
+	type wireBlock anthropicContentBlock
+	if block.Type != "thinking" {
+		return json.Marshal(wireBlock(block))
+	}
+	// Thinking blocks can carry only a signature and empty visible text.
+	// Both keys are required on replay; omitempty would corrupt these
+	// blocks in saved continuations and subsequent tool-result requests.
+	return json.Marshal(struct {
+		wireBlock
+		Thinking  string `json:"thinking"`
+		Signature string `json:"signature"`
+	}{wireBlock: wireBlock(block), Thinking: block.Thinking, Signature: block.Signature})
 }
 
 type anthropicImageSource struct {
@@ -672,8 +747,10 @@ type anthropicTool struct {
 }
 
 type anthropicMessagesResponse struct {
-	Content []anthropicContentBlock `json:"content"`
-	Usage   *anthropicUsage         `json:"usage"`
+	Model      string                  `json:"model,omitempty"`
+	StopReason string                  `json:"stop_reason,omitempty"`
+	Content    []anthropicContentBlock `json:"content"`
+	Usage      *anthropicUsage         `json:"usage"`
 }
 
 func anthropicCompletionFromBlocks(blocks []anthropicContentBlock) CompletionResult {
@@ -687,7 +764,7 @@ func anthropicCompletionFromBlocks(blocks []anthropicContentBlock) CompletionRes
 		case "thinking":
 			reasoning.WriteString(block.Thinking)
 		case "tool_use":
-			arguments := normalizedJSONObject(block.Input)
+			arguments := preserveToolArguments(string(block.Input))
 			id := strings.TrimSpace(block.ID)
 			if id == "" {
 				id = fmt.Sprintf("anthropic-tool-%d", index)
@@ -753,14 +830,14 @@ type anthropicStreamEvent struct {
 		Thinking    string `json:"thinking"`
 		Signature   string `json:"signature"`
 		PartialJSON string `json:"partial_json"`
+		StopReason  string `json:"stop_reason"`
 	} `json:"delta"`
 	Message *struct {
+		Model string          `json:"model,omitempty"`
 		Usage *anthropicUsage `json:"usage"`
 	} `json:"message"`
 	Usage *anthropicUsage `json:"usage"`
-	Error struct {
-		Message string `json:"message"`
-	} `json:"error"`
+	Error upstreamError   `json:"error"`
 }
 
 type anthropicUsage struct {
@@ -771,13 +848,25 @@ type anthropicUsage struct {
 }
 
 func (u anthropicUsage) toTokenUsage() *TokenUsage {
+	input := u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
 	return &TokenUsage{
-		PromptTokens:          u.InputTokens,
-		CompletionTokens:      u.OutputTokens,
-		TotalTokens:           u.InputTokens + u.OutputTokens,
-		PromptCacheHitTokens:  u.CacheReadInputTokens,
+		PromptTokens:         input,
+		CompletionTokens:     u.OutputTokens,
+		TotalTokens:          input + u.OutputTokens,
+		PromptCacheHitTokens: u.CacheReadInputTokens,
+		// Keep cache writes separate from ordinary uncached input for pricing.
 		PromptCacheMissTokens: u.CacheCreationInputTokens,
 	}
+}
+
+func (u *anthropicUsage) merge(next *anthropicUsage) {
+	if next == nil {
+		return
+	}
+	u.InputTokens = max(u.InputTokens, next.InputTokens)
+	u.OutputTokens = max(u.OutputTokens, next.OutputTokens)
+	u.CacheReadInputTokens = max(u.CacheReadInputTokens, next.CacheReadInputTokens)
+	u.CacheCreationInputTokens = max(u.CacheCreationInputTokens, next.CacheCreationInputTokens)
 }
 
 type anthropicErrorEnvelope struct {

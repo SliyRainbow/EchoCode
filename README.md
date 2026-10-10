@@ -1,10 +1,12 @@
 # EchoCode
 
-EchoCode 内置统一扩展中心，可从官方扩展源安装 MCP、插件和 Skills。首个扩展 CodeGraph 的说明见 [docs/codegraph.zh-CN.md](docs/codegraph.zh-CN.md)。
+EchoCode 提供 MCP、插件和 Skills 扩展能力。社区扩展源仍在建设中，当前可使用本地扩展及自行配置的服务；CodeGraph 接入说明见 [docs/codegraph.zh-CN.md](docs/codegraph.zh-CN.md)。
 
 EchoCode 是一个本地优先的 AI 编程 Agent 工作台。它把多模型协议、结构化开发工具、权限审批、Plan、AI 团队、项目记忆、对话分支、Git、持久终端和内置浏览器放进同一个桌面应用。
 
-> 当前处于快速开发阶段，Windows 是主要验证平台。源码可构建、核心测试可运行，但还不是经过签名、升级迁移和真实多供应商长期压测的稳定发行版。
+当前版本为 **0.3.21**，Windows x64 是主要发布和验证平台。可从 [GitHub Releases](https://github.com/SliyRainbow/EchoCode/releases/latest) 下载单文件 EXE 或安装版；完整更新内容见 [v0.3.21 发布说明](docs/releases/v0.3.21.md)。
+
+> Windows 后端提供受限令牌及进程资源限制，尚无完整的操作系统文件/网络隔离；“请求批准”模式下命令仍需额外批准。客户端和第三方模型能力仍在持续完善，具体测试范围见发布说明。
 
 ## 当前能力
 
@@ -15,7 +17,7 @@ EchoCode 是一个本地优先的 AI 编程 Agent 工作台。它把多模型协
 - 结构化工具：文件读取/搜索/写入/补丁/复制/删除、命令、Git、终端、网络搜索、远程仓库读取、浏览器和其他窗口操控。
 - 办公产物：无需安装 Office，可读取、创建和编辑 DOCX、XLS/XLSX 与 PPTX；XLSX 支持真实公式、样式、合并、宽高、冻结窗格、下拉验证和打印布局，`read_file` 自动解析并在右侧结构化预览，生成文件可由 Microsoft Office 打开。
 - 插件系统：独立进程 JSON-RPC/JSONL ABI、本地安装、逐项授权、超时/取消/输出限制，以及主 Agent、Plan、AI 团队和子代理统一注册。
-- 上下文：稳定前缀、MCP schema 快照、工具结果摘要、模型感知的自动上下文压缩及 tokens/缓存/费用观测。
+- 上下文：稳定前缀、MCP schema 快照、工具结果摘要、自动与手动压缩，以及工作区内的上下文用量、缓存命中率和费用观测。
 - 工作区：项目与会话持久化、长期记忆、checkpoint、rewind、对话分叉、Git 审阅和持久终端。
 - 桌面能力：Chromium 内核浏览器、网页检查与截图、文件预览、图片粘贴和预览、Windows 窗口控制。
 

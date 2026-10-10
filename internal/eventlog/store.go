@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -53,7 +55,8 @@ func (s *Store) load() error {
 	f, err := os.Open(s.eventsF)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			s.head, err = s.loadHead()
+			return err
 		}
 		return err
 	}
@@ -70,6 +73,17 @@ func (s *Store) load() error {
 		if err := json.Unmarshal(line, &ev); err != nil {
 			return fmt.Errorf("解析事件失败: %w", err)
 		}
+		if ev.ID == "" {
+			return fmt.Errorf("事件 ID 不能为空")
+		}
+		if _, duplicate := s.byID[ev.ID]; duplicate {
+			return fmt.Errorf("事件 ID 重复: %s", ev.ID)
+		}
+		if ev.ParentID != "" {
+			if _, exists := s.byID[ev.ParentID]; !exists {
+				return fmt.Errorf("事件 %s 的父事件不存在或顺序无效: %s", ev.ID, ev.ParentID)
+			}
+		}
 		s.byID[ev.ID] = ev
 		s.order = append(s.order, ev.ID)
 		if ev.Seq > s.seq {
@@ -80,24 +94,28 @@ func (s *Store) load() error {
 		return err
 	}
 	// head 恢复策略：优先读持久化的 HEAD 文件；否则取 seq 最大的事件。
-	s.head = s.loadHead()
-	return nil
+	s.head, err = s.loadHead()
+	return err
 }
 
 // headFile 记录当前 head（Rewind 后需要持久化，重启才能回到回退点）。
 func (s *Store) headFilePath() string { return filepath.Join(s.dir, "HEAD") }
 
-func (s *Store) loadHead() string {
+func (s *Store) loadHead() (string, error) {
 	data, err := os.ReadFile(s.headFilePath())
 	if err == nil {
 		id := string(data)
 		// 空 HEAD 是有效状态：表示当前分支位于首条事件之前。
 		if id == "" {
-			return ""
+			return "", nil
 		}
 		if _, ok := s.byID[id]; ok {
-			return id
+			return id, nil
 		}
+		return "", fmt.Errorf("HEAD 指向不存在的事件: %s", id)
+	}
+	if !os.IsNotExist(err) {
+		return "", fmt.Errorf("读取 HEAD 失败: %w", err)
 	}
 	// 回退：取 seq 最大的事件作为 head。
 	var head string
@@ -108,11 +126,11 @@ func (s *Store) loadHead() string {
 			head = ev.ID
 		}
 	}
-	return head
+	return head, nil
 }
 
-func (s *Store) persistHead() error {
-	return tools.WriteBytesAtomic(s.headFilePath(), []byte(s.head), 0o600)
+func (s *Store) persistHead(head string) error {
+	return tools.WriteBytesAtomic(s.headFilePath(), []byte(head), 0o600)
 }
 
 // Append 追加事件，以当前 head 为 parent，写盘并前移 head。
@@ -131,12 +149,12 @@ func (s *Store) AppendWithHeader(header EventHeader, payload EventPayload, event
 	if header.BranchID == "" {
 		header.BranchID = s.branchIDLocked()
 	}
-	s.seq++
+	seq := s.seq + 1
 	ev := Event{
 		EventHeader: header.WithDefaultSchemaVersion(),
-		ID:          fmt.Sprintf("ev-%d-%d", s.seq, time.Now().UnixNano()),
+		ID:          fmt.Sprintf("ev-%d-%d", seq, time.Now().UnixNano()),
 		ParentID:    s.head,
-		Seq:         s.seq,
+		Seq:         seq,
 		Type:        eventType,
 		TS:          time.Now().UTC(),
 		Payload:     payload,
@@ -144,14 +162,13 @@ func (s *Store) AppendWithHeader(header EventHeader, payload EventPayload, event
 	if eventType == EventBranchMarker || ev.BranchID == "" {
 		ev.BranchID = ev.ID
 	}
-	if err := s.appendRaw(ev); err != nil {
-		s.seq--
+	if err := s.appendRaw(ev, func() error { return s.persistHead(ev.ID) }); err != nil {
 		return Event{}, err
 	}
+	s.seq = seq
 	s.byID[ev.ID] = ev
 	s.order = append(s.order, ev.ID)
 	s.head = ev.ID
-	_ = s.persistHead()
 	return ev, nil
 }
 
@@ -181,7 +198,7 @@ func (s *Store) branchIDLocked() string {
 	return root
 }
 
-func (s *Store) appendRaw(ev Event) error {
+func (s *Store) appendRaw(ev Event, commit func() error) error {
 	data, err := json.Marshal(ev)
 	if err != nil {
 		return err
@@ -191,10 +208,32 @@ func (s *Store) appendRaw(ev Event) error {
 		return err
 	}
 	defer f.Close()
-	if _, err := f.Write(append(data, '\n')); err != nil {
+	info, err := f.Stat()
+	if err != nil {
 		return err
 	}
-	return f.Sync()
+	data = append(data, '\n')
+	written, err := f.Write(data)
+	if err == nil && written != len(data) {
+		err = io.ErrShortWrite
+	}
+	if err == nil {
+		err = f.Sync()
+	}
+	if err == nil {
+		err = commit()
+	}
+	if err != nil {
+		// HEAD is the commit point. A failed append must not leave a new branch
+		// in memory or a truncated JSON record that prevents the next restart.
+		// Windows append-only handles cannot truncate; use a write handle for
+		// rollback while the store's mutex still owns this append transaction.
+		if rollbackErr := os.Truncate(s.eventsF, info.Size()); rollbackErr != nil {
+			return errors.Join(err, fmt.Errorf("回滚事件追加失败: %w", rollbackErr))
+		}
+		return errors.Join(err, f.Sync())
+	}
+	return nil
 }
 
 // WriteSnapshot 内容寻址保存，返回 sha256；已存在则去重。
@@ -215,6 +254,9 @@ func (s *Store) WriteSnapshot(content string) (string, error) {
 func (s *Store) ReadSnapshot(hash string) (string, error) {
 	if hash == "" {
 		return "", nil
+	}
+	if _, err := hex.DecodeString(hash); len(hash) != sha256.Size*2 || err != nil {
+		return "", fmt.Errorf("无效的快照哈希")
 	}
 	data, err := os.ReadFile(filepath.Join(s.snapDir, hash))
 	if err != nil {
@@ -323,6 +365,9 @@ func (s *Store) SetHead(targetID string) error {
 			return fmt.Errorf("找不到事件: %s", targetID)
 		}
 	}
+	if err := s.persistHead(targetID); err != nil {
+		return err
+	}
 	s.head = targetID
-	return s.persistHead()
+	return nil
 }

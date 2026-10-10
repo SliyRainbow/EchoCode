@@ -104,4 +104,7 @@ func TestRecordLiveUsageEmitsUpdatedCacheState(t *testing.T) {
 	if emitted.UsageState.DeepSeekSession.SessionCacheHitTokens != 192 || emitted.UsageState.DeepSeekSession.SessionCacheMissTokens != 8 {
 		t.Fatalf("session state = %#v", emitted.UsageState.DeepSeekSession)
 	}
+	if emitted.UsageState.DeepSeekSession.EstimatedInputTokens != 200 || emitted.UsageState.DeepSeekSession.ContextUsageSource != "provider" {
+		t.Fatalf("live context did not include provider's tool-loop input usage: %+v", emitted.UsageState.DeepSeekSession)
+	}
 }

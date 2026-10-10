@@ -1,4 +1,5 @@
-import { Show } from "solid-js";
+import { Show, createEffect } from "solid-js";
+import { Dialog } from "@kobalte/core/dialog";
 import { Check, ShieldAlert, X } from "lucide-solid";
 import type { ApprovalRequest } from "../types";
 import { MessageContent } from "./chat/MessageContent";
@@ -10,20 +11,34 @@ export function ApprovalModal(props: {
   busy: boolean;
   onDecide: (approved: boolean, scope: "once" | "session") => void;
 }) {
+  let rejectButton: HTMLButtonElement | undefined;
+  createEffect(() => {
+    props.request.id;
+    queueMicrotask(() => rejectButton?.focus());
+  });
   return (
-    <div class="approval-overlay" role="dialog" aria-modal="true" aria-label="操作审批">
-      <div class="approval-card">
+    <Dialog open onOpenChange={(open) => { if (!open && !props.busy) props.onDecide(false, "once"); }}>
+      <Dialog.Portal>
+        <Dialog.Overlay class="ui-modal-backdrop" />
+        <div class="ui-modal-positioner">
+      <Dialog.Content class="approval-card" onOpenAutoFocus={(event) => { event.preventDefault(); rejectButton?.focus(); }} onInteractOutside={(event) => event.preventDefault()} onEscapeKeyDown={(event) => { if (props.busy) event.preventDefault(); }}>
         <div class="approval-head">
           <ShieldAlert size={18} />
           <div class="approval-headings">
-            <strong>{approvalTitle(props.request.kind)}</strong>
-            <span>{props.request.summary}</span>
+            <Dialog.Title>{approvalTitle(props.request.kind)}</Dialog.Title>
+            <Dialog.Description>{props.request.summary}</Dialog.Description>
           </div>
         </div>
 
         <div class="approval-body">
+          <Show when={props.request.path}>
+            <pre class="approval-command" aria-label="请求访问的文件">{props.request.path}</pre>
+          </Show>
           <Show when={props.request.kind === "command"}>
             <pre class="approval-command">{props.request.command}</pre>
+          </Show>
+          <Show when={props.request.kind === "file" && props.request.command && !props.request.parts?.length}>
+            <pre class="approval-command" aria-label="请求执行的文件操作">{props.request.command}</pre>
           </Show>
           <Show when={props.request.kind === "browser"}>
             <pre class="approval-command">{props.request.url}</pre>
@@ -34,13 +49,13 @@ export function ApprovalModal(props: {
         </div>
 
         <div class="approval-actions">
-          <button class="approval-reject" type="button" disabled={props.busy} onClick={() => props.onDecide(false, "once")}>
+          <button ref={rejectButton} class="approval-reject" type="button" disabled={props.busy} onClick={() => props.onDecide(false, "once")}>
             <X size={14} />
             {props.request.kind === "plan" ? "不执行" : "拒绝"}
           </button>
           <Show when={props.request.kind !== "plan"}>
             <button class="approval-allow-session" type="button" disabled={props.busy} onClick={() => props.onDecide(true, "session")}>
-              本会话都允许
+              本会话允许此操作
             </button>
           </Show>
           <button class="approval-approve" type="button" disabled={props.busy} onClick={() => props.onDecide(true, "once")}>
@@ -48,8 +63,10 @@ export function ApprovalModal(props: {
             {props.request.kind === "plan" ? "执行此计划" : "批准"}
           </button>
         </div>
-      </div>
-    </div>
+      </Dialog.Content>
+        </div>
+      </Dialog.Portal>
+    </Dialog>
   );
 }
 

@@ -150,7 +150,7 @@ func TestApprovalGateRejectDoesNotWrite(t *testing.T) {
 	svc := NewService(ServiceConfig{SkillsDir: t.TempDir()})
 	svc.runtimeSettings.WorkspaceRoot = workspace
 	svc.runtimeSettings.FilesystemAccess = "workspace-write"
-	svc.runtimeSettings.ApprovalPolicy = "on-request"
+	svc.runtimeSettings.ApprovalPolicy = "always"
 	// notify 立即拒绝。
 	svc.SetApprovalNotify(func(req ApprovalRequest) {
 		go func() { _ = svc.RespondApproval(req.ID, req.Tool, false, "once") }()
@@ -180,7 +180,7 @@ func TestApprovalGateApproveWrites(t *testing.T) {
 	svc := NewService(ServiceConfig{SkillsDir: t.TempDir()})
 	svc.runtimeSettings.WorkspaceRoot = workspace
 	svc.runtimeSettings.FilesystemAccess = "workspace-write"
-	svc.runtimeSettings.ApprovalPolicy = "on-request"
+	svc.runtimeSettings.ApprovalPolicy = "always"
 	svc.SetApprovalNotify(func(req ApprovalRequest) {
 		go func() { _ = svc.RespondApproval(req.ID, req.Tool, true, "once") }()
 	})

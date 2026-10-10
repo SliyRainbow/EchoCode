@@ -103,15 +103,14 @@ func (s *Service) runToolLoopTurn(
 				s.sessionMessages = s.appendProtocolAssistantMessage(s.sessionMessages, answer, parts)
 				s.sessionState.MessageCount = len(s.sessionMessages)
 				finishChatTiming(ctx, "completed")
-				s.recordAssistantAndCheckpoint(answer, route.ModelID, parts, chatTurnDurationMs(ctx))
 				s.markChatProviderStatus(route.Provider.ID, "ok", "计划已生成，等待下一步。")
-				return ChatResult{
+				return s.commitAssistantResult(ChatResult{
 					Content: answer,
 					Model:   route.ModelID,
 					Usage:   s.metrics,
 					State:   s.workbenchStateLocked(),
 					Parts:   parts,
-				}, nil
+				}, chatTurnDurationMs(ctx))
 			}
 			if len(planSteps) > 0 {
 				planSteps[0].Status = "in_progress"
@@ -205,17 +204,16 @@ func (s *Service) runToolLoopTurn(
 	s.sessionState.TurnCount++
 	// 文件快照已在每次工具写入后立即记录，这里只提交 assistant + checkpoint。
 	finishChatTiming(ctx, "completed")
-	s.recordAssistantAndCheckpoint(answer, route.ModelID, outcome.Parts, chatTurnDurationMs(ctx))
 	s.markChatProviderStatus(route.Provider.ID, "ok", fmt.Sprintf("试聊成功，%s / %s 工具会话完成，产出 %d 个片段。", route.Provider.Name, route.ModelID, len(outcome.Parts)))
 
-	return ChatResult{
+	return s.commitAssistantResult(ChatResult{
 		Content:   answer,
 		Reasoning: outcome.Reasoning,
 		Model:     route.ModelID,
 		Usage:     s.metrics,
 		State:     s.workbenchStateLocked(),
 		Parts:     outcome.Parts,
-	}, nil
+	}, chatTurnDurationMs(ctx))
 }
 
 func (s *Service) validateTurnTaskScopeOutcome(ctx context.Context, outcome toolLoopOutcome) error {
@@ -373,11 +371,11 @@ func (s *Service) buildMutableToolRegistryForContext(ctx context.Context, includ
 	if s.config.OpenFile != nil || s.config.PreviewFile != nil {
 		reg.Add(tools.OpenFileTool{Policy: policy, Open: s.config.OpenFile, Preview: s.config.PreviewFile})
 	}
-	if s.config.Browser != nil && s.runtimeSettings.Browser.Enabled {
+	if !readOnly && s.config.Browser != nil && s.runtimeSettings.Browser.Enabled {
 		reg.Add(tools.BrowserTool{Policy: policy, Controller: s.config.Browser})
 	}
 	computerSettings := s.runtimeSettings.ComputerControl
-	if s.config.Computer != nil && (computerSettings.AnyAppEnabled || computerSettings.ChromeEnabled || len(computerSettings.AlwaysAllowedApps) > 0) {
+	if !readOnly && s.config.Computer != nil && (computerSettings.AnyAppEnabled || computerSettings.ChromeEnabled || len(computerSettings.AlwaysAllowedApps) > 0) {
 		reg.Add(tools.ComputerTool{Policy: policy, Controller: s.config.Computer})
 	}
 	if includeDelegation {
@@ -1041,6 +1039,9 @@ func (s *Service) runToolLoopWithCompletionState(
 		}
 		stepReq := req
 		stepReq.Messages = fitToolLoopMessages(messages, req.TargetInputTokens)
+		if req.MaxInputTokens > 0 && estimateProtocolMessagesTokens(stepReq.Messages) > req.MaxInputTokens {
+			return outcome, fmt.Errorf("压缩后的工具上下文仍超过模型输入预算 %d tokens；请缩短输入或选择更大上下文模型", req.MaxInputTokens)
+		}
 		if !toolsDisabled {
 			stepReq.Tools = toolDefs
 			if forceSubstantiveTool && !requiredToolChoiceUnsupported {
@@ -1077,13 +1078,17 @@ func (s *Service) runToolLoopWithCompletionState(
 			outcome.UsageSamples = append(outcome.UsageSamples, usage)
 		}
 		if strings.TrimSpace(completion.Reasoning) != "" {
-			outcome.Reasoning = completion.Reasoning
+			if outcome.Reasoning != "" {
+				outcome.Reasoning += "\n\n"
+			}
+			outcome.Reasoning += completion.Reasoning
 		}
 		if strings.TrimSpace(completion.Content) != "" {
 			outcome.Content = completion.Content
 		}
 		if err != nil && stepReq.ParallelToolCalls && isParallelToolCallsCompatibilityError(err) {
 			req.ParallelToolCalls = false
+			req.OmitParallelToolCalls = true
 			emitChatEvent(sink, ChatStreamEvent{
 				Type:    "status",
 				Message: "当前模型端点不支持并行工具请求，正在保留完整工具能力并以兼容模式重试。",
@@ -1401,6 +1406,7 @@ func (s *Service) runToolLoopWithCompletionState(
 				emitOutcomeProgress(sink, outcome.Parts)
 			}
 			// 把工具结果回喂给模型。
+			toolMsg.ToolError = result.IsError
 			messages = append(messages, toolMsg)
 			roundRecords = append(roundRecords, toolLoopRoundRecord{
 				Name:      call.Function.Name,
@@ -1601,6 +1607,9 @@ func toolCompatibilityMessage(message string) bool {
 func isRetryablePostToolCompletionError(ctx context.Context, err error) bool {
 	if err == nil || ctx.Err() != nil || errors.Is(err, context.Canceled) {
 		return false
+	}
+	if info, ok := protocol.ProviderErrorDetails(err); ok {
+		return info.Retryable
 	}
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return true
@@ -1848,10 +1857,16 @@ func (s *Service) executeToolCall(ctx context.Context, reg *tools.Registry, call
 	toolRegistered := false
 	defer func() {
 		result = ensureToolExecutionMetadata(result, name, call.ID, normalizedArgs, startedAt, time.Now())
+		message.ToolError = result.IsError
 		if toolRegistered {
 			s.recordToolTerminalEvent(name, call.ID, result)
 		}
 	}()
+	var argumentObject map[string]json.RawMessage
+	if err := json.Unmarshal(normalizedArgs, &argumentObject); err != nil || argumentObject == nil {
+		summary := fmt.Sprintf("工具 %s 的参数必须是完整的 JSON 对象，请修正后重试。", name)
+		return tools.Result{Summary: summary, IsError: true}, protocol.Message{Role: "tool", ToolCallID: call.ID, Name: name, Content: summary, ToolError: true}
+	}
 	tool, ok := reg.Get(name)
 	if !ok {
 		summary := fmt.Sprintf("未知工具: %s", name)

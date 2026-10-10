@@ -14,7 +14,7 @@ func Canonical(path string) (string, error) {
 		return "", err
 	}
 	abs = filepath.Clean(abs)
-	resolved, err := filepath.EvalSymlinks(abs)
+	resolved, err := canonicalExistingPath(abs)
 	if err == nil {
 		return filepath.Clean(resolved), nil
 	}
@@ -32,7 +32,7 @@ func Canonical(path string) (string, error) {
 		missing = append(missing, filepath.Base(probe))
 		probe = parent
 
-		resolved, resolveErr := filepath.EvalSymlinks(probe)
+		resolved, resolveErr := canonicalExistingPath(probe)
 		if resolveErr == nil {
 			for index := len(missing) - 1; index >= 0; index-- {
 				resolved = filepath.Join(resolved, missing[index])

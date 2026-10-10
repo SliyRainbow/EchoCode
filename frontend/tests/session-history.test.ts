@@ -50,6 +50,30 @@ describe("session history reconciliation", () => {
     expect(reconcileSessionMessages(current, [], false)).toEqual([]);
   });
 
+  test("restores reasoning from durable history", () => {
+    const restored = reconcileSessionMessages([], [{ id: "answer-1", role: "assistant", content: "done", reasoning: "fixture trace", createdAt: "2026-10-09T00:00:00Z" }], false);
+    expect(restored[0].reasoning).toBe("fixture trace");
+  });
+
+  test("keeps the live identity and reasoning while adopting a persisted event", () => {
+    const live: ChatMessage[] = [{ id: "assistant-local", role: "assistant", content: "done", reasoning: "streamed fixture trace", createdAt: "2026-10-09T00:00:00Z" }];
+    const restored = reconcileSessionMessages(live, [{ id: "answer-1", role: "assistant", content: "done", createdAt: "2026-10-09T00:00:00Z" }], true);
+    expect(restored[0]).toMatchObject({ id: "assistant-local", eventId: "answer-1", reasoning: "streamed fixture trace" });
+    expect(reconcileSessionMessages(restored, [{ id: "answer-1", role: "assistant", content: "done", reasoning: "saved trace", createdAt: "2026-10-09T00:00:00Z" }], true)[0]).toMatchObject({ id: "assistant-local", eventId: "answer-1", reasoning: "saved trace" });
+  });
+
+  test("does not transfer optimistic reasoning across branches or different answers", () => {
+    const live: ChatMessage[] = [{ id: "assistant-local", role: "assistant", content: "done", reasoning: "old trace", createdAt: "2026-10-09T00:00:00Z" }];
+    const history = [{ id: "another-answer", role: "assistant", content: "done", createdAt: "2026-10-09T00:00:00Z" }];
+    expect(reconcileSessionMessages(live, history, false)[0].reasoning).toBeUndefined();
+    expect(reconcileSessionMessages(live, [{ ...history[0], content: "different answer" }], true)[0].reasoning).toBeUndefined();
+  });
+
+  test("respects an explicitly empty reasoning field in persisted history", () => {
+    const live: ChatMessage[] = [{ id: "answer-1", role: "assistant", content: "done", reasoning: "old trace", createdAt: "2026-10-09T00:00:00Z" }];
+    expect(reconcileSessionMessages(live, [{ id: "answer-1", role: "assistant", content: "done", reasoning: "", createdAt: "2026-10-09T00:00:00Z" }], true)[0].reasoning).toBe("");
+  });
+
   test("replaces optimistic messages with persisted history", () => {
     expect(reconcileSessionMessages(current, [
       {
@@ -71,6 +95,18 @@ describe("session history reconciliation", () => {
     ]);
   });
 
+  test("retains unsaved output on refresh but never across a branch replacement", () => {
+    const current: ChatMessage[] = [
+      { id: "question", eventId: "question", role: "user", content: "question", createdAt: "2026-10-10T00:00:00Z" },
+      { id: "unsaved", role: "assistant", content: "real output", historyError: "disk full", createdAt: "2026-10-10T00:00:01Z" },
+    ];
+    const history = [{ id: "question", role: "user", content: "question", createdAt: "2026-10-10T00:00:00Z" }];
+    expect(reconcileSessionMessages(current, history, true)).toHaveLength(2);
+    expect(reconcileSessionMessages(current, history, false)).toHaveLength(1);
+    const durable = reconcileSessionMessages(current, [...history, { id: "answer", role: "assistant", content: "real output", createdAt: "2026-10-10T00:00:01Z" }], true);
+    expect(durable).toHaveLength(2);
+    expect(durable[1].historyError).toBeUndefined();
+  });
 	test("restores durable failed, cancelled, and interrupted task states", () => {
 	  expect(reconcileSessionMessages([], [
 		{ id: "failed", role: "assistant", content: "failed", createdAt: "2026-07-19T02:00:00.000Z", status: "failed" },

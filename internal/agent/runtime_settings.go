@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -45,7 +46,7 @@ type RuntimeSettings struct {
 	Memory                 MemorySettings          `json:"memory"`
 }
 
-const runtimeSettingsSchemaVersion = 13
+const runtimeSettingsSchemaVersion = 14
 
 type SkillsSettings struct {
 	Disabled []string `json:"disabled"`
@@ -424,11 +425,17 @@ func (settings RuntimeSettings) Normalized() RuntimeSettings {
 		"unrestricted":    true,
 	})
 	settings.ApprovalPolicy = normalizeChoice(settings.ApprovalPolicy, defaults.ApprovalPolicy, map[string]bool{
+		"always":     true,
 		"never":      true,
 		"on-request": true,
 		"on-failure": true,
 		"untrusted":  true,
 	})
+	// Older labels shared one conservative implementation. Preserve its actual
+	// behaviour under an explicit name rather than promise unsupported policies.
+	if settings.ApprovalPolicy == "on-failure" || settings.ApprovalPolicy == "untrusted" {
+		settings.ApprovalPolicy = "always"
+	}
 	settings.ToolResultPolicy = normalizeChoice(settings.ToolResultPolicy, defaults.ToolResultPolicy, map[string]bool{
 		"summary-first": true,
 		"balanced":      true,
@@ -534,26 +541,37 @@ func (settings RuntimeSettings) Validate() error {
 }
 
 func loadRuntimeSettings(path string) (RuntimeSettings, bool) {
+	settings, loaded, _ := loadRuntimeSettingsWithError(path)
+	return settings, loaded
+}
+
+func loadRuntimeSettingsWithError(path string) (RuntimeSettings, bool, error) {
 	settings := DefaultRuntimeSettings()
 	if strings.TrimSpace(path) == "" {
-		return settings, false
+		return settings, false, nil
 	}
 	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return settings, false, nil
+	}
 	if err != nil {
-		return settings, false
+		return settings, false, fmt.Errorf("读取运行设置 %s 失败，原文件已保留，请修复后重启: %w", path, err)
 	}
 	var stored RuntimeSettings
 	if err := json.Unmarshal(data, &stored); err != nil {
-		return settings, false
+		return settings, false, fmt.Errorf("解析运行设置 %s 失败，原文件已保留，请修复后重启: %w", path, err)
 	}
 	if stored.SchemaVersion < 2 && stored.ApprovalPolicy == "never" && !stored.AllowDestructiveOps {
 		stored.ApprovalPolicy = "on-request"
 	}
 	stored = migrateRuntimeSettings(stored)
-	return stored.Normalized(), true
+	return stored.Normalized(), true, nil
 }
 
 func migrateRuntimeSettings(stored RuntimeSettings) RuntimeSettings {
+	if stored.SchemaVersion < 14 && stored.ApprovalPolicy != "never" {
+		stored.ApprovalPolicy = "always"
+	}
 	if stored.SchemaVersion < 9 {
 		stored.Plugins = plugins.DefaultSettings()
 	}

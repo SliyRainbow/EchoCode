@@ -14,6 +14,7 @@ export default defineConfig({
         manualChunks: {
           markdown: ["markdown-it", "highlight.js"],
           solid: ["solid-js"],
+          ui: ["@kobalte/core"],
         },
       },
     },

@@ -20,7 +20,8 @@ export function displayMessageParts(
   content: string,
   streaming: boolean | undefined,
 ): MessagePart[] {
-  const visibleParts = sanitizeAssistantMessageParts(parts);
+  const visibleParts = sanitizeAssistantMessageParts(parts).filter(part => part.kind !== "timeline_note"
+    || (!part.toolCallId?.startsWith("timing:") && !isRoutineTaskStatus(part.message)));
   if (!visibleParts.length) {
     const visibleContent = sanitizeAssistantTextForDisplay(content);
     return visibleContent ? [{ kind: "text", text: visibleContent }] : [];
@@ -33,6 +34,7 @@ export function updateLiveTimelineParts(
   event: ChatTaskEvent,
 ): MessagePart[] {
   if (event.type === "heartbeat" || event.type === "started") return parts ?? [];
+  if (event.toolCallId?.startsWith("timing:")) return parts ?? [];
 
   const message = event.message?.trim();
   if (!message || isRoutineTaskStatus(message)) return parts ?? [];

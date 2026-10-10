@@ -118,6 +118,7 @@ func withTurnTaskScopeContext(preview RequestContext, scope turnTaskScope, works
 }
 
 var relativeTurnPathPattern = regexp.MustCompile(`[A-Za-z0-9][A-Za-z0-9_.-]*(?:[/\\][A-Za-z0-9_.-]+)+`)
+var turnURLPattern = regexp.MustCompile("(?i)[a-z][a-z0-9+.-]*://[^\\s<>\"'`，。；！？]+")
 
 // inferTurnTaskScope extracts only path-shaped, user-authored target mentions.
 // It does not classify the request by product keywords or inject a guessed
@@ -179,8 +180,19 @@ func (s *Service) inferTurnTaskScope(prompt string, explicit []string) turnTaskS
 		index = end + 1
 	}
 
+	urlRanges := turnURLPattern.FindAllStringIndex(prompt, -1)
 	for _, match := range relativeTurnPathPattern.FindAllStringIndex(prompt, -1) {
 		if len(match) != 2 {
+			continue
+		}
+		insideURL := false
+		for _, span := range urlRanges {
+			if match[0] >= span[0] && match[0] < span[1] {
+				insideURL = true
+				break
+			}
+		}
+		if insideURL {
 			continue
 		}
 		startContext := maxInt(0, match[0]-24)

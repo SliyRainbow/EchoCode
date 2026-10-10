@@ -52,6 +52,7 @@ type ServiceConfig struct {
 }
 
 type WorkbenchState struct {
+	StorageError        string                   `json:"storageError,omitempty"`
 	ActiveProjectID     string                   `json:"activeProjectId"`
 	ActiveSessionID     string                   `json:"activeSessionId"`
 	Reasoning           ReasoningProfile         `json:"reasoning"`
@@ -96,6 +97,7 @@ type ChatResult struct {
 	// 无工具调用的普通对话此字段为空，前端回退纯文本渲染。
 	Parts         []tools.ResultPart          `json:"parts,omitempty"`
 	TurnCommitted bool                        `json:"turnCommitted"`
+	HistoryError  string                      `json:"historyError,omitempty"`
 	ProviderError *protocol.ProviderErrorInfo `json:"providerError,omitempty"`
 }
 
@@ -141,9 +143,12 @@ type DeepSeekSessionState struct {
 	CommonPrefixMessageCount    int            `json:"commonPrefixMessageCount"`
 	ContextWindowTokens         int            `json:"contextWindowTokens"`
 	ContextWindowSource         string         `json:"contextWindowSource,omitempty"`
+	ContextUsageSource          string         `json:"contextUsageSource,omitempty"`
 	EstimatedInputTokens        int            `json:"estimatedInputTokens"`
 	InputBudgetTokens           int            `json:"inputBudgetTokens"`
 	ContextUsagePercent         float64        `json:"contextUsagePercent"`
+	CompressionTriggerTokens    int            `json:"compressionTriggerTokens"`
+	CompressionTargetTokens     int            `json:"compressionTargetTokens"`
 	CompressionCount            int            `json:"compressionCount"`
 	CompressedMessageCount      int            `json:"compressedMessageCount"`
 	LastCompressedAt            string         `json:"lastCompressedAt,omitempty"`
@@ -178,6 +183,8 @@ type Service struct {
 	builder                     ContextBuilder
 	runtimeSettings             RuntimeSettings
 	settingsPath                string
+	initializationError         error
+	sessionLoadError            error
 	eventStore                  *eventlog.Store // 事件日志（可为 nil：未配置持久化时）
 	sessionID                   string
 	approvals                   *approvalBroker
@@ -212,6 +219,9 @@ type Service struct {
 }
 
 func (s *Service) beginActivity(action string) (func(), error) {
+	if s.initializationError != nil {
+		return nil, s.initializationError
+	}
 	s.activityMu.Lock()
 	if s.turnActive {
 		s.activityMu.Unlock()
@@ -230,7 +240,16 @@ func (s *Service) beginActivity(action string) (func(), error) {
 }
 
 func (s *Service) beginChatTurn() (func(), error) {
-	return s.beginActivity("starting another operation")
+	release, err := s.beginActivity("starting another operation")
+	if err != nil {
+		return nil, err
+	}
+	if s.sessionLoadError != nil {
+		err = s.sessionLoadError
+		release()
+		return nil, err
+	}
+	return release, nil
 }
 
 func (s *Service) chatActive() bool {
@@ -308,19 +327,20 @@ func NewService(config ServiceConfig) *Service {
 	if secretVault == nil {
 		secretVault = vault.NewMemoryVault()
 	}
-	runtimeSettings, loadedSettings := loadRuntimeSettings(config.SettingsPath)
+	runtimeSettings, loadedSettings, loadErr := loadRuntimeSettingsWithError(config.SettingsPath)
 	if loadedSettings {
 		// Persist schema migrations such as inferred per-model context windows.
 		_ = saveRuntimeSettings(config.SettingsPath, runtimeSettings)
 	}
 	svc := &Service{
-		config:          config,
-		reasoning:       DefaultReasoningLevel,
-		secretVault:     secretVault,
-		runtimeSettings: runtimeSettings,
-		settingsPath:    config.SettingsPath,
-		mcpManager:      mcp.NewManager(),
-		pluginManager:   plugins.NewManager(config.PluginsDir, config.AppVersion),
+		config:              config,
+		reasoning:           DefaultReasoningLevel,
+		secretVault:         secretVault,
+		runtimeSettings:     runtimeSettings,
+		settingsPath:        config.SettingsPath,
+		initializationError: loadErr,
+		mcpManager:          mcp.NewManager(),
+		pluginManager:       plugins.NewManager(config.PluginsDir, config.AppVersion),
 		deepSeekState: DeepSeekState{
 			Configured:       providerAPIKeyConfigured(secretVault, "deepseek"),
 			BaseURL:          deepSeekBaseURLFromSettings(runtimeSettings, config.DeepSeekBaseURL),
@@ -345,7 +365,9 @@ func NewService(config ServiceConfig) *Service {
 	}
 	svc.approvals = newApprovalBroker()
 	svc.initEventStore()
-	_, _ = svc.RecoverInterruptedTaskRuntimes()
+	if svc.initializationError == nil && svc.sessionLoadError == nil {
+		_, _ = svc.RecoverInterruptedTaskRuntimes()
+	}
 	svc.rebuildSessionFromEvents()
 	svc.restoreUsageMetrics()
 	svc.storeWorkbenchSnapshot(svc.workbenchStateLocked())
@@ -386,6 +408,19 @@ func (s *Service) SaveRuntimeSettings(settings RuntimeSettings) (WorkbenchState,
 		return s.workbenchStateLocked(), err
 	}
 	settings = s.runtimeSettingsWithSecretFlags(settings)
+	if s.projects != nil {
+		if active, ok := s.projects.ActiveProject(); ok && !sameWorkspacePath(active.WorkspaceRoot, settings.WorkspaceRoot) {
+			return s.workbenchStateLocked(), errors.New("工作区路径与项目绑定，请从项目选择器打开其他目录")
+		}
+	}
+	if err := saveRuntimeSettings(s.settingsPath, settings); err != nil {
+		return s.workbenchStateLocked(), err
+	}
+	if s.projects != nil && !sameStringList(s.runtimeSettings.ExtraWritableRoots, settings.ExtraWritableRoots) {
+		if err := s.projects.SetProjectExtraWritableRoots(s.projectID, settings.ExtraWritableRoots); err != nil {
+			return s.workbenchStateLocked(), errors.Join(err, saveRuntimeSettings(s.settingsPath, s.runtimeSettings))
+		}
+	}
 	s.runtimeSettings = settings
 	s.teamState.Enabled = settings.Team.Enabled
 	if !settings.Team.Enabled && !s.teamState.Active {
@@ -402,9 +437,6 @@ func (s *Service) SaveRuntimeSettings(settings RuntimeSettings) (WorkbenchState,
 		s.invalidateProviderSession("Skills 启用状态已更新；下一轮会重建上下文前缀。")
 	} else if currentPlugins, _ := json.Marshal(settings.Plugins); string(previousPlugins) != string(currentPlugins) {
 		s.invalidateProviderSession("插件启用状态或权限已更新；下一轮会重建工具前缀。")
-	}
-	if err := saveRuntimeSettings(s.settingsPath, settings); err != nil {
-		return s.workbenchStateLocked(), err
 	}
 	return s.workbenchStateLocked(), nil
 }
@@ -1060,6 +1092,12 @@ func (s *Service) sendChatMessage(ctx context.Context, prompt string, rawAttachm
 		if len(subagentParts) > 0 {
 			result.Parts = mergeOutcomeParts(result.Parts, subagentParts)
 		}
+		if result.HistoryError != "" {
+			// Do not append a second assistant message when only its checkpoint
+			// failed, or roll back files after the answer was already produced.
+			result.State = s.workbenchStateLocked()
+			return
+		}
 		if err == nil {
 			result.TurnCommitted = true
 			return
@@ -1112,8 +1150,9 @@ func (s *Service) sendChatMessage(ctx context.Context, prompt string, rawAttachm
 			result.Model = route.ModelID
 		}
 		finishChatTiming(ctx, terminalStatus)
-		if terminalErr := s.recordTurnTerminal(terminalStatus, result.Content, result.Model, result.Parts, chatTurnDurationMs(ctx)); terminalErr != nil {
+		if terminalErr := s.recordTurnTerminal(terminalStatus, result.Content, result.Model, result.Parts, chatTurnDurationMs(ctx), result.Reasoning); terminalErr != nil {
 			err = errors.Join(err, terminalErr)
+			result.HistoryError = fmt.Sprintf("本轮结果未能完整保存，请保留当前输出并检查存储：%v", terminalErr)
 		}
 		result.State = s.workbenchStateLocked()
 	}()
@@ -1157,7 +1196,9 @@ func (s *Service) sendChatMessage(ctx context.Context, prompt string, rawAttachm
 		})
 	}
 	if !resumeTeamRun {
-		s.recordUserEventWithAttachments(prompt, attachments)
+		if err := s.recordUserEventWithAttachments(prompt, attachments); err != nil {
+			return ChatResult{State: s.workbenchStateLocked(), Model: route.ModelID}, err
+		}
 	}
 	requestMessages := cloneProtocolMessages(s.sessionMessages)
 	prefixDiagnostic := s.compareRequestPrefix(requestMessages)
@@ -1278,17 +1319,16 @@ func (s *Service) sendChatMessage(ctx context.Context, prompt string, rawAttachm
 	s.sessionState.MessageCount = len(s.sessionMessages)
 	s.sessionState.TurnCount++
 	finishChatTiming(ctx, "completed")
-	s.recordAssistantAndCheckpoint(answer, route.ModelID, noticeParts, chatTurnDurationMs(ctx))
 	s.markChatProviderStatus(route.Provider.ID, "ok", fmt.Sprintf("试聊成功，%s / %s 流式通道正常。", route.Provider.Name, route.ModelID))
 
-	return ChatResult{
+	return s.commitAssistantResult(ChatResult{
 		Content:   answer,
 		Reasoning: completion.Reasoning,
 		Model:     route.ModelID,
 		Usage:     s.metrics,
 		State:     s.workbenchStateLocked(),
 		Parts:     noticeParts,
-	}, nil
+	}, chatTurnDurationMs(ctx))
 }
 
 func (s *Service) WorkbenchState() WorkbenchState {
@@ -1564,6 +1604,7 @@ func (s *Service) workbenchStateWithPreview(preview RequestContext) WorkbenchSta
 	teamState := cloneTeamState(s.teamState)
 	teamState.Enabled = runtimeSettings.Team.Enabled
 	return WorkbenchState{
+		StorageError:        storageErrorMessage(s.initializationError, s.sessionLoadError),
 		ActiveProjectID:     s.projectID,
 		ActiveSessionID:     s.sessionID,
 		Reasoning:           profile,
@@ -1732,6 +1773,10 @@ func (s *Service) invalidateProviderSession(reason string) {
 
 func (s *Service) deepSeekSessionState() DeepSeekSessionState {
 	state := s.sessionState
+	if route, err := s.contextRoute(); err == nil {
+		profile, _ := ReasoningProfileFor(s.reasoning)
+		setContextTelemetry(&state, contextBudgetForRoutePolicy(route, profile.Budget.ContextPolicy), estimateProtocolMessagesTokens(s.sessionMessages))
+	}
 	state.Active = len(s.sessionMessages) > 0
 	state.MessageCount = len(s.sessionMessages)
 	if state.Reasoning == "" {

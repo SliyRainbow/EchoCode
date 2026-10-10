@@ -44,6 +44,9 @@ func (s *Service) NewSessionRuntime(sessionID string) (*Service, error) {
 // A blank project ID is retained only for legacy callers and must resolve to a
 // globally unambiguous session ID.
 func (s *Service) NewProjectSessionRuntime(projectID, sessionID string) (*Service, error) {
+	if s.initializationError != nil {
+		return nil, s.initializationError
+	}
 	projectID = strings.TrimSpace(projectID)
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
@@ -51,6 +54,11 @@ func (s *Service) NewProjectSessionRuntime(projectID, sessionID string) (*Servic
 	}
 
 	s.stateMu.RLock()
+	if s.projects == nil && s.sessionLoadError != nil {
+		err := s.sessionLoadError
+		s.stateMu.RUnlock()
+		return nil, err
+	}
 	projects := s.projects
 	config := s.config
 	settings := cloneRuntimeSettings(s.runtimeSettings)

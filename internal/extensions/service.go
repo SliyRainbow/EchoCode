@@ -35,11 +35,12 @@ type Options struct {
 }
 
 type Service struct {
-	registryURL string
-	cachePath   string
-	installRoot string
-	httpClient  *http.Client
-	mu          sync.Mutex
+	registryURL    string
+	cachePath      string
+	installRoot    string
+	httpClient     *http.Client
+	cleanupWarning string
+	mu             sync.Mutex
 }
 
 func New(options Options) *Service {
@@ -82,6 +83,12 @@ func (s *Service) Catalog(ctx context.Context, refresh bool) (CatalogState, erro
 }
 
 func (s *Service) Install(ctx context.Context, id string) (InstallResult, error) {
+	return s.InstallAndActivate(ctx, id, nil)
+}
+
+// InstallAndActivate keeps the previous version until the host has durably
+// switched its MCP configuration. activate must not call back into Service.
+func (s *Service) InstallAndActivate(ctx context.Context, id string, activate func(InstallResult) error) (InstallResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	state, err := s.catalogForInstall(ctx)
@@ -92,14 +99,27 @@ func (s *Service) Install(ctx context.Context, id string) (InstallResult, error)
 	if !ok {
 		return InstallResult{}, fmt.Errorf("扩展不存在：%s", id)
 	}
+	if safeSegment(item.ID) != item.ID || item.ID == "." || item.ID == ".." ||
+		strings.TrimSpace(item.Manifest.Version) == "" || item.Manifest.Version == "." || item.Manifest.Version == ".." || strings.ContainsAny(item.Manifest.Version, `/\:`) {
+		return InstallResult{}, errors.New("扩展 ID 或版本包含无效路径字符")
+	}
 	artifact, ok := artifactForCurrentPlatform(item.Manifest.Artifacts)
 	if !ok {
 		return InstallResult{}, fmt.Errorf("扩展 %s 不支持当前平台 %s/%s", id, runtime.GOOS, runtime.GOARCH)
 	}
-	installed, _ := s.readInstalledState()
+	installed, err := s.readInstalledState()
+	if err != nil {
+		return InstallResult{}, err
+	}
 	if current, found := findInstalled(installed.Packages, id); found && current.Version == item.Manifest.Version {
 		if info, statErr := os.Stat(current.Executable); statErr == nil && !info.IsDir() {
-			return InstallResult{Package: current, Manifest: item.Manifest}, nil
+			result := InstallResult{Package: current, Manifest: item.Manifest}
+			if activate != nil {
+				if err := activate(result); err != nil {
+					return InstallResult{}, err
+				}
+			}
+			return result, nil
 		}
 	}
 	if s.installRoot == "" {
@@ -144,16 +164,6 @@ func (s *Service) Install(ctx context.Context, id string) (InstallResult, error)
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return InstallResult{}, fmt.Errorf("创建扩展版本目录失败: %w", err)
 	}
-	if _, statErr := os.Stat(target); statErr == nil {
-		if err := removeWithinRoot(s.installRoot, target); err != nil {
-			return InstallResult{}, err
-		}
-	} else if !errors.Is(statErr, os.ErrNotExist) {
-		return InstallResult{}, statErr
-	}
-	if err := os.Rename(packageRoot, target); err != nil {
-		return InstallResult{}, fmt.Errorf("提交扩展安装失败: %w", err)
-	}
 	finalExecutable := filepath.Join(target, filepath.FromSlash(artifact.Executable))
 	result := InstalledPackage{
 		ID:          item.ID,
@@ -166,16 +176,105 @@ func (s *Service) Install(ctx context.Context, id string) (InstallResult, error)
 		Executable:  finalExecutable,
 		InstalledAt: time.Now().UTC().Format(time.RFC3339),
 	}
-	previous, hadPrevious := findInstalled(installed.Packages, id)
-	installed.Packages = upsertInstalled(installed.Packages, result)
-	if err := s.writeInstalledState(installed); err != nil {
-		_ = removeWithinRoot(s.installRoot, target)
+	if err := ctx.Err(); err != nil {
 		return InstallResult{}, err
 	}
-	if hadPrevious && filepath.Clean(previous.InstallDir) != filepath.Clean(target) {
-		_ = removeWithinRoot(s.installRoot, previous.InstallDir)
+	if err := s.commitInstallAndActivate(packageRoot, result, installed, func() error {
+		if activate != nil {
+			return activate(InstallResult{Package: result, Manifest: item.Manifest})
+		}
+		return nil
+	}); err != nil {
+		return InstallResult{}, err
 	}
 	return InstallResult{Package: result, Manifest: item.Manifest}, nil
+}
+
+// Keep the old files recoverable until installed.json commits. A failed repair
+// of an existing version must not destroy the package it was meant to repair.
+func (s *Service) commitInstall(packageRoot string, result InstalledPackage, installed installedState) error {
+	return s.commitInstallAndActivate(packageRoot, result, installed, nil)
+}
+
+func (s *Service) commitInstallAndActivate(packageRoot string, result InstalledPackage, installed installedState, activate func() error) error {
+	backup, err := s.stageInstalledDirectory(result.InstallDir)
+	if err != nil {
+		return err
+	}
+	rollback := func(cause error) error {
+		if backup == "" {
+			return cause
+		}
+		if err := os.Rename(backup, result.InstallDir); err != nil {
+			return errors.Join(cause, fmt.Errorf("恢复旧扩展失败，备份保留在 %s: %w", backup, err))
+		}
+		_ = os.Remove(filepath.Dir(backup))
+		return cause
+	}
+	if err := os.Rename(packageRoot, result.InstallDir); err != nil {
+		return rollback(fmt.Errorf("提交扩展安装失败: %w", err))
+	}
+	previous, hadPrevious := findInstalled(installed.Packages, result.ID)
+	next := installedState{Packages: upsertInstalled(installed.Packages, result)}
+	if err := s.writeInstalledState(next); err != nil {
+		if removeErr := removeWithinRoot(s.installRoot, result.InstallDir); removeErr != nil {
+			return errors.Join(err, removeErr, fmt.Errorf("旧扩展备份保留在 %s", backup))
+		}
+		return rollback(err)
+	}
+	if activate != nil {
+		if err := activate(); err != nil {
+			if stateErr := s.writeInstalledState(installed); stateErr != nil {
+				return errors.Join(err, fmt.Errorf("恢复安装状态失败，旧版本文件仍保留（修复备份：%s）: %w", backup, stateErr))
+			}
+			if removeErr := removeWithinRoot(s.installRoot, result.InstallDir); removeErr != nil {
+				return errors.Join(err, removeErr, fmt.Errorf("旧扩展备份保留在 %s", backup))
+			}
+			return rollback(err)
+		}
+	}
+	if backup != "" {
+		s.cleanupDirectory(filepath.Dir(backup))
+	}
+	if hadPrevious && filepath.Clean(previous.InstallDir) != filepath.Clean(result.InstallDir) {
+		s.cleanupDirectory(previous.InstallDir)
+	}
+	return nil
+}
+
+// Stage on the same volume so moving an installed directory is atomic. The
+// caller owns cleanup only after metadata commits or the directory is restored.
+func (s *Service) stageInstalledDirectory(target string) (string, error) {
+	if strings.TrimSpace(s.installRoot) == "" || strings.TrimSpace(target) == "" {
+		return "", errors.New("扩展安装路径为空")
+	}
+	if err := ensureWithinRoot(s.installRoot, target); err != nil {
+		return "", err
+	}
+	rootAbs, _ := filepath.Abs(s.installRoot)
+	targetAbs, _ := filepath.Abs(target)
+	if strings.EqualFold(rootAbs, targetAbs) {
+		return "", errors.New("拒绝移动扩展根目录")
+	}
+	if _, err := os.Lstat(target); errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	} else if err != nil {
+		return "", err
+	}
+	stageRoot := filepath.Join(s.installRoot, ".staging")
+	if err := os.MkdirAll(stageRoot, 0o755); err != nil {
+		return "", err
+	}
+	stage, err := os.MkdirTemp(stageRoot, "rollback-")
+	if err != nil {
+		return "", err
+	}
+	backup := filepath.Join(stage, "package")
+	if err := os.Rename(target, backup); err != nil {
+		_ = os.Remove(stage)
+		return "", fmt.Errorf("暂存旧扩展失败: %w", err)
+	}
+	return backup, nil
 }
 
 func (s *Service) Uninstall(id string) error {
@@ -189,27 +288,56 @@ func (s *Service) Uninstall(id string) error {
 	if !ok {
 		return nil
 	}
-	if err := removeWithinRoot(s.installRoot, current.InstallDir); err != nil {
+	return s.commitUninstall(current, installed)
+}
+
+func (s *Service) commitUninstall(current InstalledPackage, installed installedState) error {
+	backup, err := s.stageInstalledDirectory(current.InstallDir)
+	if err != nil {
 		return err
 	}
-	next := installed.Packages[:0]
+	next := make([]InstalledPackage, 0, len(installed.Packages))
 	for _, item := range installed.Packages {
-		if item.ID != id {
+		if item.ID != current.ID {
 			next = append(next, item)
 		}
 	}
 	installed.Packages = next
-	return s.writeInstalledState(installed)
+	if err := s.writeInstalledState(installed); err != nil {
+		if backup != "" {
+			if restoreErr := os.Rename(backup, current.InstallDir); restoreErr != nil {
+				return errors.Join(err, fmt.Errorf("恢复扩展失败，备份保留在 %s: %w", backup, restoreErr))
+			}
+			_ = os.Remove(filepath.Dir(backup))
+		}
+		return err
+	}
+	if backup != "" {
+		s.cleanupDirectory(filepath.Dir(backup))
+	}
+	return nil
+}
+
+func (s *Service) cleanupDirectory(path string) {
+	if err := removeWithinRoot(s.installRoot, path); err != nil {
+		s.cleanupWarning = fmt.Sprintf("扩展状态已保存，但旧文件清理失败（%s）：%v", path, err)
+	}
 }
 
 func (s *Service) Installed(id string) (InstalledPackage, bool) {
+	installed, found, _ := s.LookupInstalled(id)
+	return installed, found
+}
+
+func (s *Service) LookupInstalled(id string) (InstalledPackage, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	state, err := s.readInstalledState()
 	if err != nil {
-		return InstalledPackage{}, false
+		return InstalledPackage{}, false, err
 	}
-	return findInstalled(state.Packages, id)
+	installed, found := findInstalled(state.Packages, id)
+	return installed, found, nil
 }
 
 func (s *Service) RunProjectAction(ctx context.Context, id, actionID, workspaceRoot string) (ActionResult, error) {
@@ -399,7 +527,12 @@ func (s *Service) downloadAndVerify(ctx context.Context, artifact Artifact, dest
 }
 
 func (s *Service) attachInstalled(state CatalogState) CatalogState {
-	installed, _ := s.readInstalledState()
+	state.Warning = strings.TrimSpace(state.Warning + "\n" + s.cleanupWarning)
+	installed, err := s.readInstalledState()
+	if err != nil {
+		state.Warning = strings.TrimSpace(state.Warning + "\n扩展安装状态读取失败，已保留原文件：" + err.Error())
+		return state
+	}
 	for index := range state.Packages {
 		if current, ok := findInstalled(installed.Packages, state.Packages[index].ID); ok {
 			copy := current

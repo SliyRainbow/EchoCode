@@ -1,0 +1,118 @@
+/* File, Git, browser and document surfaces share the workbench controls. */
+.panel-tabs {
+  align-items: center;
+  gap: 4px;
+}
+
+.panel-tabs [role="tab"] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 28px;
+  height: 28px;
+  padding: 0 10px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  box-shadow: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+.panel-tabs [role="tab"]:hover { color: var(--text-primary); background: var(--bg-hover); }
+.panel-tabs [role="tab"][data-selected] { color: var(--text-primary); background: var(--bg-active); }
+.panel-tabs [role="tab"] > svg { flex: 0 0 auto; }
+.panel-tabs [role="tab"]:focus-visible,
+.panel-option:focus-visible {
+  outline: 1px solid var(--focus-outline);
+  outline-offset: -2px;
+}
+
+.panel-option {
+  color: var(--text-secondary);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  box-shadow: none;
+  cursor: pointer;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+.panel-option:hover:not(:disabled) { color: var(--text-primary); background: var(--bg-hover); }
+.panel-option[data-selected] { color: var(--text-primary); background: var(--bg-active); }
+.panel-option:disabled { cursor: default; }
+
+.review-panel { container-type: inline-size; }
+.review-file-rail { grid-template-rows: 42px minmax(0, 1fr); background: var(--bg-sidebar); }
+.review-rail-tabs.panel-tabs { padding: 6px; background: transparent; }
+.review-rail-tabs [role="tab"] { flex: 1; }
+.review-view-tabs.panel-tabs { padding: 2px; border: 0; background: var(--bg-hover); border-radius: 7px; }
+.review-view-tabs [role="tab"] { min-height: 25px; height: 25px; padding: 0 8px; font-size: 11px; }
+.review-file-summary { padding: 0 12px; border-bottom: 0; }
+.review-file-summary strong { font-size: 12px; font-weight: 500; color: var(--text-secondary); }
+.review-file-list { padding: 4px 6px 8px; }
+.review-file-list.review-project-tree { padding: 4px 6px 8px; }
+.review-tree-row { height: 30px; gap: 6px; padding-left: calc(6px + var(--tree-indent, 0px)); font-size: 12px; }
+.review-tree-row.directory { font-weight: 500; }
+.review-tree-row.directory > svg { color: var(--text-muted); }
+.review-file-row { margin-bottom: 3px; border: 0; border-radius: 6px; }
+.review-file-row:is(:hover, .active) { background: transparent; }
+.review-file-select.panel-option { width: 100%; min-height: 44px; border-radius: 6px; }
+.review-file-select strong { font-weight: 500; }
+.review-file-select small { color: var(--text-muted); }
+.review-file-filter { min-height: 30px; margin: 3px 8px 7px; border-radius: 7px; background: var(--bg-main); }
+.review-file-filter:focus-within { border-color: var(--focus-border); }
+.review-file-filter input { height: 28px; font-size: 12px; }
+.review-file-content { height: 100%; min-width: 0; min-height: 0; overflow: hidden; }
+.review-file-content > .artifact-viewer { height: 100%; }
+.review-diff-toolbar { background: var(--bg-main); }
+.review-file-heading { flex-wrap: wrap; row-gap: 1px !important; }
+.review-file-heading strong { font-size: 12px; font-weight: 500; }
+.review-head .review-actions button,
+.review-diff-controls .review-open-action { width: 28px; height: 28px; border: 0; border-radius: 6px; }
+.review-head .review-actions button.active { color: var(--text-primary); background: var(--bg-active); }
+.review-diff-controls .ui-icon-button { flex: 0 0 28px; }
+
+.side-panel-host { border-left-color: var(--border-color); }
+.side-panel-host.has-mode-tabs { grid-template-rows: 40px minmax(0, 1fr); }
+.side-panel-mode-tabs.panel-tabs { height: 40px; padding: 6px; }
+.side-panel-mode-tabs [role="tab"] { justify-content: flex-start; }
+.side-panel-mode-tabs [role="tab"] span { overflow: hidden; text-overflow: ellipsis; }
+
+.workspace-tools-tabs.panel-tabs { padding: 0; }
+.workspace-tools-tabs [role="tab"] { min-width: 70px; }
+.git-branch-control .settings-select-root { flex: 1; min-width: 110px; max-width: 220px; }
+.git-branch-control .settings-select-trigger { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 28px; height: 28px; padding: 0 8px; color: var(--text-primary); background: var(--bg-input); border: 1px solid var(--border-color); border-radius: 6px; font: inherit; font-size: 12px; cursor: pointer; }
+.git-new-branch input, .git-commit-row input { border-radius: 6px; }
+.git-file-row { height: 31px; margin: 3px 5px; border: 0; border-radius: 6px; }
+.git-file-row.active { background: var(--bg-active); }
+.git-file-row .panel-option[data-selected] { background: transparent; }
+.git-diff-head .segmented-control { min-height: 26px; padding: 2px; border-radius: 6px; }
+.git-diff-head .settings-segment > div { min-height: 24px; padding: 2px 8px; font-size: 11px; }
+.git-diff-head .settings-segment[data-checked] > div { background: var(--bg-active); border-color: transparent; }
+
+.spreadsheet-artifact { grid-template-rows: 40px minmax(0, 1fr); }
+.artifact-sheet-tabs.panel-tabs { padding: 6px 8px; }
+.artifact-sheet-panel { display: grid; grid-template-rows: 28px minmax(0, 1fr) auto; min-width: 0; min-height: 0; overflow: hidden; }
+
+.browser-managed { grid-template-rows: 40px 40px minmax(0, 1fr) auto; }
+.browser-tabs.panel-tabs { height: 40px; padding: 5px 6px; gap: 4px; }
+.browser-tab { margin: 0; border: 0; border-radius: 6px; }
+.browser-tab.active { background: var(--bg-active); }
+.browser-tab [role="tab"] { justify-content: flex-start; padding: 0 5px 0 8px; font-size: 11px; }
+.browser-tab [role="tab"] span { overflow: hidden; text-overflow: ellipsis; }
+.browser-tabs .browser-new-tab, .browser-tabs .browser-panel-close { height: 28px; margin: 0; border-radius: 6px; }
+.browser-inspector-tabs.panel-tabs { min-height: 38px; padding: 5px; gap: 2px; }
+.browser-inspector-tabs [role="tab"] { padding: 0 7px; font-size: 11px; }
+
+@container (max-width: 560px) {
+  .review-file-heading small { display: none; }
+  .review-layout { grid-template-columns: minmax(0, 1fr) clamp(154px, 34%, 190px); }
+  .review-diff-toolbar { gap: 5px; padding-inline: 8px; }
+}

@@ -1,3 +1,5 @@
+import { PanelTab } from "./ui/PanelTab";
+import { Tabs } from "@kobalte/core/tabs";
 import {
   Check,
   ChevronDown,
@@ -35,6 +37,8 @@ import type {
   WorkspaceFileView,
 } from "../types";
 import { ArtifactViewer } from "./ArtifactViewer";
+import { SelectableRow } from "./ui/SelectableRow";
+import { TooltipButton } from "./ui/TooltipButton";
 
 const CodeViewer = lazy(async () => {
   const module = await import("./CodeViewer");
@@ -61,6 +65,7 @@ export function ReviewPanel(props: ReviewPanelProps) {
   const [diff, setDiff] = createSignal<GitDiff>();
   const [preview, setPreview] = createSignal<WorkspaceFilePreview>();
   const [selectedPath, setSelectedPath] = createSignal("");
+  const [focusedTreePath, setFocusedTreePath] = createSignal("");
   const [viewMode, setViewMode] = createSignal<WorkspaceFileView>("file");
   const [requestedLine, setRequestedLine] = createSignal<number>();
   const [stagedDiff, setStagedDiff] = createSignal(false);
@@ -79,6 +84,7 @@ export function ReviewPanel(props: ReviewPanelProps) {
   const [diffError, setDiffError] = createSignal("");
   let activeWorkspace = "";
   let fileRequest = 0;
+  let tree: HTMLDivElement | undefined;
 
   const selectedFile = createMemo(() => findGitFile(status(), selectedPath()));
   const filteredFiles = createMemo(() => {
@@ -91,7 +97,55 @@ export function ReviewPanel(props: ReviewPanelProps) {
     return wordDiff() ? decorateWordDifferences(rows) : rows;
   });
   const diffStats = createMemo(() => countDiffChanges(diff()?.patch ?? ""));
-  const projectRows = createMemo(() => flattenWorkspaceRows(directoryListings(), expandedDirectories()));
+  const projectRows = createMemo<WorkspaceTreeRow[]>((previous) => {
+    const cached = new Map(previous?.map((row) => [row.entry.path, row]));
+    return flattenWorkspaceRows(directoryListings(), expandedDirectories()).map((row) => {
+      const prior = cached.get(row.entry.path);
+      return prior?.entry === row.entry && prior.depth === row.depth ? prior : row;
+    });
+  });
+  const treeTabStop = createMemo(() => {
+    const rows = projectRows().filter((row) => !row.entry.isSymlink);
+    return rows.find((row) => row.entry.path === focusedTreePath())?.entry.path
+      ?? rows.find((row) => pathsEqual(row.entry.path, selectedPath()))?.entry.path
+      ?? rows[0]?.entry.path;
+  });
+
+  function focusTreeRow(path: string) {
+    setFocusedTreePath(path);
+    queueMicrotask(() => {
+      const element = Array.from(tree?.querySelectorAll<HTMLButtonElement>("[role=treeitem]") ?? [])
+        .find((item) => item.dataset.path === path);
+      element?.focus();
+      element?.scrollIntoView({ block: "nearest" });
+    });
+  }
+
+  function handleTreeKey(event: KeyboardEvent, row: WorkspaceTreeRow) {
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    const rows = projectRows().filter((item) => !item.entry.isSymlink);
+    const index = rows.findIndex((item) => item.entry.path === row.entry.path);
+    let target: WorkspaceTreeRow | undefined;
+    switch (event.key) {
+      case "ArrowDown": target = rows[Math.min(rows.length - 1, index + 1)]; break;
+      case "ArrowUp": target = rows[Math.max(0, index - 1)]; break;
+      case "Home": target = rows[0]; break;
+      case "End": target = rows.at(-1); break;
+      case "ArrowRight":
+        if (row.entry.isDirectory && !expandedDirectories().has(row.entry.path)) {
+          void toggleDirectory(row.entry).then(() => focusTreeRow(row.entry.path));
+        } else if (rows[index + 1]?.depth > row.depth) target = rows[index + 1];
+        break;
+      case "ArrowLeft":
+        if (row.entry.isDirectory && expandedDirectories().has(row.entry.path)) {
+          void toggleDirectory(row.entry).then(() => focusTreeRow(row.entry.path));
+        } else target = rows.slice(0, index).reverse().find((item) => item.depth < row.depth);
+        break;
+      default: return;
+    }
+    event.preventDefault();
+    if (target) focusTreeRow(target.entry.path);
+  }
 
   createEffect(() => {
     const open = props.open;
@@ -108,6 +162,7 @@ export function ReviewPanel(props: ReviewPanelProps) {
       setPreview(undefined);
       setDiff(undefined);
       setSelectedPath("");
+      setFocusedTreePath("");
       setDirectoryListings({});
       setExpandedDirectories(new Set([""]));
       setLoadingDirectories(new Set<string>());
@@ -117,6 +172,7 @@ export function ReviewPanel(props: ReviewPanelProps) {
       activeWorkspace = workspaceRoot;
       previousPath = "";
       setSelectedPath("");
+      setFocusedTreePath("");
       setPreview(undefined);
       setDiff(undefined);
       setFilter("");
@@ -304,33 +360,31 @@ export function ReviewPanel(props: ReviewPanelProps) {
           </div>
           <div class="review-actions">
             <Show when={viewMode() === "changes" && selectedFile()}>
-              <button
-                type="button"
-                classList={{ active: ignoreWhitespace() }}
-                title="隐藏仅空白字符差异"
-                aria-pressed={ignoreWhitespace()}
+              <TooltipButton
+                label="隐藏仅空白字符差异" placement="bottom"
+                active={ignoreWhitespace()}
                 disabled={busy()}
                 onClick={() => void toggleWhitespace()}
               >
                 <Pilcrow size={14} />
-              </button>
-              <button type="button" classList={{ active: wordDiff() }} title="突出词内变化" aria-pressed={wordDiff()} onClick={() => setWordDiff((value) => !value)}>
+              </TooltipButton>
+              <TooltipButton label="突出词内变化" placement="bottom" active={wordDiff()} onClick={() => setWordDiff((value) => !value)}>
                 <ListFilter size={14} />
-              </button>
+              </TooltipButton>
             </Show>
-            <button type="button" classList={{ active: wrapLines() }} title="自动换行" aria-pressed={wrapLines()} onClick={() => setWrapLines((value) => !value)}>
+            <TooltipButton label="自动换行" placement="bottom" active={wrapLines()} onClick={() => setWrapLines((value) => !value)}>
               <WrapText size={14} />
-            </button>
-            <button type="button" title="刷新文件" disabled={busy()} onClick={() => void refresh(props.workspaceRoot, props.request, selectedPath())}>
+            </TooltipButton>
+            <TooltipButton label="刷新文件" placement="bottom" disabled={busy()} onClick={() => void refresh(props.workspaceRoot, props.request, selectedPath())}>
               <RefreshCw size={14} classList={{ spinning: busy() }} />
-            </button>
-            <button type="button" title="关闭文件面板" aria-label="关闭文件面板" onClick={props.onClose}><X size={15} /></button>
+            </TooltipButton>
+            <TooltipButton label="关闭文件面板" placement="bottom" onClick={props.onClose}><X size={15} /></TooltipButton>
           </div>
         </header>
 
         <Show when={props.workspaceRoot.trim()} fallback={<div class="review-empty">请先选择项目工作区</div>}>
           <div class="review-layout">
-            <section class="review-diff-surface">
+            <Tabs class="review-diff-surface" value={viewMode()} onChange={(value) => setViewMode(value as WorkspaceFileView)}>
               <div class="review-diff-toolbar">
                 <div class="review-file-heading">
                   <strong title={selectedPath()}>{selectedPath() || "文件预览"}</strong>
@@ -341,14 +395,14 @@ export function ReviewPanel(props: ReviewPanelProps) {
                 </div>
                 <div class="review-diff-controls">
                   <Show when={selectedPath()}>
-                    <div class="review-view-tabs" role="tablist" aria-label="文件视图">
-                      <button type="button" role="tab" classList={{ active: viewMode() === "file" }} aria-selected={viewMode() === "file"} onClick={() => setViewMode("file")}>文件</button>
+                    <Tabs.List class="review-view-tabs panel-tabs" aria-label="文件视图">
+                      <PanelTab value="file">文件</PanelTab>
                       <Show when={selectedFile()}>
-                        <button type="button" role="tab" classList={{ active: viewMode() === "changes" }} aria-selected={viewMode() === "changes"} onClick={() => setViewMode("changes")}>更改</button>
+                        <PanelTab value="changes">更改</PanelTab>
                       </Show>
-                    </div>
-                    <button type="button" class="review-open-action" title="使用系统应用打开" aria-label="使用系统应用打开" onClick={() => void runFileAction("open")}><ExternalLink size={13} /></button>
-                    <button type="button" class="review-open-action" title="在文件夹中显示" aria-label="在文件夹中显示" onClick={() => void runFileAction("reveal")}><FolderOpen size={13} /></button>
+                    </Tabs.List>
+                    <TooltipButton class="review-open-action" label="使用系统应用打开" placement="bottom" onClick={() => void runFileAction("open")}><ExternalLink size={13} /></TooltipButton>
+                    <TooltipButton class="review-open-action" label="在文件夹中显示" placement="bottom" onClick={() => void runFileAction("reveal")}><FolderOpen size={13} /></TooltipButton>
                   </Show>
                 </div>
               </div>
@@ -362,7 +416,7 @@ export function ReviewPanel(props: ReviewPanelProps) {
                   </div>
                 }>
                   <Match when={selectedPath() && viewMode() === "changes"}>
-                    <div class="review-diff-scroll" classList={{ wrap: wrapLines() }}>
+                    <Tabs.Content value="changes" class="review-diff-scroll" classList={{ wrap: wrapLines() }}>
                       <For each={parsedDiff()} fallback={<div class="review-diff-empty">{diffError() || "这个文件目前没有可显示的更改"}</div>}>
                         {(line) => (
                           <div class={`review-diff-line ${line.kind}`}>
@@ -377,18 +431,19 @@ export function ReviewPanel(props: ReviewPanelProps) {
                           </div>
                         )}
                       </For>
-                    </div>
+                    </Tabs.Content>
                   </Match>
                   <Match when={preview()?.artifact}>
-                    {(artifact) => <ArtifactViewer artifact={artifact()} />}
+                    {(artifact) => <Tabs.Content value="file" class="review-file-content"><ArtifactViewer artifact={artifact()} /></Tabs.Content>}
                   </Match>
                   <Match when={preview()?.binary}>
-                    <PreviewUnavailable title="这是二进制文件" detail="文本查看器无法安全显示它，请使用系统应用打开。" onOpen={() => void runFileAction("open")} onReveal={() => void runFileAction("reveal")} />
+                    <Tabs.Content value="file" class="review-file-content"><PreviewUnavailable title="这是二进制文件" detail="文本查看器无法安全显示它，请使用系统应用打开。" onOpen={() => void runFileAction("open")} onReveal={() => void runFileAction("reveal")} /></Tabs.Content>
                   </Match>
                   <Match when={preview()?.tooLarge}>
-                    <PreviewUnavailable title="文件过大，未加载文本预览" detail={`文件大小 ${formatBytes(preview()?.size ?? 0)}，请使用系统应用打开。`} onOpen={() => void runFileAction("open")} onReveal={() => void runFileAction("reveal")} />
+                    <Tabs.Content value="file" class="review-file-content"><PreviewUnavailable title="文件过大，未加载文本预览" detail={`文件大小 ${formatBytes(preview()?.size ?? 0)}，请使用系统应用打开。`} onOpen={() => void runFileAction("open")} onReveal={() => void runFileAction("reveal")} /></Tabs.Content>
                   </Match>
                   <Match when={preview()}>
+                    <Tabs.Content value="file" class="review-file-content">
                     <Suspense fallback={<div class="review-preview-empty"><RefreshCw class="spinning" size={18} /><span>正在加载代码查看器...</span></div>}>
                       <CodeViewer
                         content={preview()?.content ?? ""}
@@ -398,45 +453,34 @@ export function ReviewPanel(props: ReviewPanelProps) {
                         dark={props.dark}
                       />
                     </Suspense>
+                    </Tabs.Content>
                   </Match>
                   <Match when={previewError()}>
-                    <div class="review-preview-empty"><FileCode2 size={22} /><strong>无法预览文件</strong><span>{previewError()}</span></div>
+                    <Tabs.Content value="file" class="review-preview-empty"><FileCode2 size={22} /><strong>无法预览文件</strong><span>{previewError()}</span></Tabs.Content>
                   </Match>
                 </Switch>
               </Show>
-            </section>
+            </Tabs>
 
-            <aside class="review-file-rail">
-              <div class="review-rail-tabs" role="tablist" aria-label="项目文件与 Git 更改">
-                <button
-                  type="button"
-                  role="tab"
-                  classList={{ active: railMode() === "project" }}
-                  aria-selected={railMode() === "project"}
-                  onClick={() => setRailMode("project")}
-                >
+            <Tabs as="aside" class="review-file-rail" value={railMode()} onChange={(value) => setRailMode(value as ReviewRailMode)}>
+              <Tabs.List class="review-rail-tabs panel-tabs" aria-label="项目文件与 Git 更改">
+                <PanelTab value="project">
                   <Folder size={13} />项目
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  classList={{ active: railMode() === "changes" }}
-                  aria-selected={railMode() === "changes"}
-                  onClick={() => setRailMode("changes")}
-                >
+                </PanelTab>
+                <PanelTab value="changes">
                   <GitBranch size={13} />更改
                   <Show when={(status()?.files.length ?? 0) > 0}><span>{status()?.files.length}</span></Show>
-                </button>
-              </div>
+                </PanelTab>
+              </Tabs.List>
 
               <Show when={railMode() === "project"} fallback={
-                <div class="review-rail-content changes">
+                <Tabs.Content value="changes" class="review-rail-content changes">
                   <div class="review-file-summary">
                     <div><strong>Git 更改</strong><span>{status()?.files.length ?? 0}</span></div>
                   </div>
                   <label class="review-file-filter">
                     <Search size={13} />
-                    <input value={filter()} placeholder="筛选更改" spellcheck={false} onInput={(event) => setFilter(event.currentTarget.value)} />
+                    <input aria-label="筛选更改" value={filter()} placeholder="筛选更改" spellcheck={false} onInput={(event) => setFilter(event.currentTarget.value)} />
                   </label>
                   <div class="review-file-list">
                     <For each={filteredFiles()} fallback={
@@ -444,23 +488,23 @@ export function ReviewPanel(props: ReviewPanelProps) {
                     }>
                       {(file) => (
                         <div class="review-file-row" classList={{ active: pathsEqual(file.path, selectedPath()), conflict: file.conflicted }}>
-                          <button type="button" class="review-file-select" title={file.path} onClick={() => void loadFile(file.path, "changes", status())}>
+                          <SelectableRow selected={pathsEqual(file.path, selectedPath())} aria-current={pathsEqual(file.path, selectedPath()) ? "true" : undefined} class="review-file-select" title={file.path} onClick={() => void loadFile(file.path, "changes", status())}>
                             <span class={`review-file-code ${file.untracked ? "untracked" : file.conflicted ? "conflict" : file.staged ? "staged" : "modified"}`}>
                               {file.untracked ? "N" : file.conflicted ? "!" : file.staged && !file.modified ? "A" : "M"}
                             </span>
                             <span><strong>{fileName(file.path)}</strong><small>{fileDirectory(file.path)}</small></span>
-                          </button>
+                          </SelectableRow>
                         </div>
                       )}
                     </For>
                   </div>
-                </div>
+                </Tabs.Content>
               }>
-                <div class="review-rail-content project">
+                <Tabs.Content value="project" class="review-rail-content project">
                   <div class="review-file-summary">
                     <div><strong title={props.workspaceRoot}>{workspaceName(props.workspaceRoot)}</strong><span>{projectRows().length}</span></div>
                   </div>
-                  <div class="review-file-list review-project-tree" role="tree" aria-label="项目文件">
+                  <div ref={tree} class="review-file-list review-project-tree" role="tree" aria-label="项目文件">
                   <For each={projectRows()} fallback={
                     <div class="review-clean">
                       <Show when={!treeError()} fallback={<span>{treeError()}</span>}>
@@ -472,14 +516,21 @@ export function ReviewPanel(props: ReviewPanelProps) {
                       const expanded = () => expandedDirectories().has(row.entry.path);
                       const loading = () => loadingDirectories().has(row.entry.path);
                       return (
-                        <button
-                          type="button"
+                        <SelectableRow
+                          selected={pathsEqual(row.entry.path, selectedPath())}
                           class="review-tree-row"
-                          classList={{ active: pathsEqual(row.entry.path, selectedPath()), directory: row.entry.isDirectory, symlink: row.entry.isSymlink }}
+                          classList={{ directory: row.entry.isDirectory, symlink: row.entry.isSymlink }}
                           style={`--tree-indent:${row.depth * 14}px`}
                           title={row.entry.isSymlink ? `${row.entry.path}（符号链接不在项目树中展开）` : row.entry.path}
                           role="treeitem"
+                          data-path={row.entry.path}
+                          aria-level={row.depth + 1}
+                          aria-selected={pathsEqual(row.entry.path, selectedPath())}
+                          disabled={row.entry.isSymlink}
+                          tabIndex={row.entry.path === treeTabStop() ? 0 : -1}
                           aria-expanded={row.entry.isDirectory ? expanded() : undefined}
+                          onFocus={() => setFocusedTreePath(row.entry.path)}
+                          onKeyDown={(event) => handleTreeKey(event, row)}
                           onClick={() => openProjectEntry(row.entry)}
                         >
                           <span class="review-tree-chevron">
@@ -491,7 +542,7 @@ export function ReviewPanel(props: ReviewPanelProps) {
                             {expanded() ? <FolderOpen size={14} /> : <Folder size={14} />}
                           </Show>
                           <span>{row.entry.name}</span>
-                        </button>
+                        </SelectableRow>
                       );
                     }}
                   </For>
@@ -502,9 +553,9 @@ export function ReviewPanel(props: ReviewPanelProps) {
                     <div class="review-tree-note error">{treeError()}</div>
                   </Show>
                   </div>
-                </div>
+                </Tabs.Content>
               </Show>
-            </aside>
+            </Tabs>
           </div>
         </Show>
         <Show when={error()}><div class="review-error" role="alert">{error()}</div></Show>

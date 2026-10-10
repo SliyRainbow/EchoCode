@@ -35,7 +35,7 @@ func (t *pluginTool) InputSchema() map[string]any { return t.descriptor.InputSch
 
 func (t *pluginTool) ReadOnly() bool { return t.descriptor.ReadOnly }
 
-func (t *pluginTool) Execute(ctx context.Context, rawArgs json.RawMessage) (tools.Result, error) {
+func (t *pluginTool) Execute(ctx context.Context, rawArgs json.RawMessage) (result tools.Result, err error) {
 	if !grantContains(t.setting.Permissions, t.descriptor.Permissions) {
 		return pluginErrorResult(t.Name(), "插件缺少该工具所需的用户授权"), nil
 	}
@@ -54,6 +54,22 @@ func (t *pluginTool) Execute(ctx context.Context, rawArgs json.RawMessage) (tool
 		return pluginErrorResult(t.Name(), err.Error()), nil
 	}
 	outputStates := t.captureOutputFileStates(arguments)
+	before, err := t.captureOutputSnapshots(arguments)
+	if err != nil {
+		return tools.Result{}, err
+	}
+	defer func() {
+		changes, snapshotErr := t.outputSnapshotChanges(before)
+		if snapshotErr != nil {
+			var restoreErr error
+			for _, original := range before {
+				restoreErr = errors.Join(restoreErr, tools.RestoreFile(t.policy, original.path, original.content, original.existed, "", string(tools.EncodingBinary), false))
+			}
+			err = errors.Join(err, fmt.Errorf("保存插件文件快照失败: %w", snapshotErr), restoreErr)
+			return
+		}
+		result.Changes = append(result.Changes, changes...)
+	}()
 	timeout := t.descriptor.TimeoutSeconds
 	if timeout <= 0 || timeout > t.limits.maxExecutionSeconds {
 		timeout = t.limits.maxExecutionSeconds
@@ -69,10 +85,6 @@ func (t *pluginTool) Execute(ctx context.Context, rawArgs json.RawMessage) (tool
 		Kind: tools.PartToolCall, Name: t.Name(), Status: "waiting", Input: boundedText(string(rawArgs), 4000),
 		Output: "正在等待插件运行时返回结果", StartedAt: startedAt.Format(time.RFC3339Nano),
 	})
-	var (
-		result tools.Result
-		err    error
-	)
 	if t.record.source == "builtin" {
 		result, err = runBuiltinWorker(callCtx, t.manager.AppVersion(), t.record, t.descriptor, arguments, t.policy, t.setting.Permissions, t.limits)
 	} else {

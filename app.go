@@ -23,19 +23,20 @@ import (
 )
 
 type App struct {
-	ctx               context.Context
-	service           *agent.Service
-	preview           *workspacePreviewServer
-	browser           *browserengine.Service
-	computer          *computercontrol.Service
-	chat              chatTaskRunner
-	terminal          *terminal.Manager
-	git               workspacegit.Service
-	updater           *appupdate.Service
-	automations       *automation.Service
-	extensions        *extensions.Service
-	runtimeSettingsMu sync.RWMutex
-	runtimeSettings   agent.RuntimeSettings
+	ctx                 context.Context
+	service             *agent.Service
+	preview             *workspacePreviewServer
+	browser             *browserengine.Service
+	computer            *computercontrol.Service
+	chat                chatTaskRunner
+	terminal            *terminal.Manager
+	git                 workspacegit.Service
+	updater             *appupdate.Service
+	automations         *automation.Service
+	automationLoadError error
+	extensions          *extensions.Service
+	runtimeSettingsMu   sync.RWMutex
+	runtimeSettings     agent.RuntimeSettings
 }
 
 func NewApp() *App {
@@ -45,9 +46,6 @@ func NewApp() *App {
 		usageStoreError = usageStoreErr.Error()
 	}
 	automations, automationErr := automation.New(automationTasksPath())
-	if automationErr != nil {
-		automations, _ = automation.New("")
-	}
 	app := &App{
 		preview:  newWorkspacePreviewServer(),
 		browser:  browserengine.New(browserProfileDir(), browserDownloadsDir()),
@@ -59,8 +57,9 @@ func NewApp() *App {
 			BuildDate:      appBuildDate,
 			CacheDir:       updateCacheDir(),
 		}),
-		automations: automations,
-		extensions:  newExtensionService(),
+		automations:         automations,
+		automationLoadError: automationErr,
+		extensions:          newExtensionService(),
 	}
 	app.service = agent.NewService(agent.ServiceConfig{
 		AppVersion:             appVersion,
@@ -139,11 +138,11 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) shutdown(_ context.Context) {
-	a.cancelAllChatTasks()
 	if a.automations != nil {
 		a.automations.SetNotify(nil)
 		a.automations.Stop()
 	}
+	a.cancelAllChatTasks()
 	if a.updater != nil {
 		a.updater.SetNotify(nil)
 	}
@@ -375,6 +374,12 @@ func (a *App) ListCheckpoints() []agent.CheckpointInfo {
 
 // RewindToCheckpoint 回退到指定检查点：对话与文件一起回退。
 func (a *App) RewindToCheckpoint(checkpointID string) (agent.WorkbenchState, error) {
+	a.chat.transitionMu.Lock()
+	defer a.chat.transitionMu.Unlock()
+	projectID, sessionID := a.service.ActiveSessionIDs()
+	if err := a.requireTimelineIdleChat(projectID, sessionID); err != nil {
+		return a.service.WorkbenchState(), err
+	}
 	return a.service.RewindToCheckpoint(checkpointID)
 }
 
@@ -385,6 +390,12 @@ func (a *App) ListBranches() []agent.BranchInfo {
 
 // SwitchBranch 切换到另一条对话线（叶子），文件与对话一起切换。
 func (a *App) SwitchBranch(leafID string) (agent.WorkbenchState, error) {
+	a.chat.transitionMu.Lock()
+	defer a.chat.transitionMu.Unlock()
+	projectID, sessionID := a.service.ActiveSessionIDs()
+	if err := a.requireTimelineIdleChat(projectID, sessionID); err != nil {
+		return a.service.WorkbenchState(), err
+	}
 	return a.service.SwitchBranch(leafID)
 }
 
@@ -397,9 +408,11 @@ func (a *App) ForkFromMessage(messageEventID string) (agent.WorkbenchState, erro
 // ForkFromMessageForProjectSession pins the rewind to the conversation that
 // supplied the message. Background tasks in other conversations may continue.
 func (a *App) ForkFromMessageForProjectSession(projectID, sessionID, messageEventID string) (agent.WorkbenchState, error) {
+	a.chat.transitionMu.Lock()
+	defer a.chat.transitionMu.Unlock()
 	projectID = strings.TrimSpace(projectID)
 	sessionID = strings.TrimSpace(sessionID)
-	if err := a.requireProjectSessionIdleChat(projectID, sessionID); err != nil {
+	if err := a.requireTimelineIdleChat(projectID, sessionID); err != nil {
 		return a.service.WorkbenchState(), err
 	}
 	return a.service.ForkFromMessageForProjectSession(projectID, sessionID, messageEventID)
@@ -440,6 +453,8 @@ func (a *App) GetSessionMessagesForProjectSession(projectID, sessionID string) (
 }
 
 func (a *App) CreateProject(name string, workspaceRoot string) (agent.WorkbenchState, error) {
+	a.chat.transitionMu.Lock()
+	defer a.chat.transitionMu.Unlock()
 	previousRoot := a.runtimeSettingsSnapshot().WorkspaceRoot
 	state, err := a.service.CreateProject(name, workspaceRoot)
 	if err == nil {
@@ -449,6 +464,8 @@ func (a *App) CreateProject(name string, workspaceRoot string) (agent.WorkbenchS
 	return state, err
 }
 func (a *App) SwitchProject(projectID string) (agent.WorkbenchState, error) {
+	a.chat.transitionMu.Lock()
+	defer a.chat.transitionMu.Unlock()
 	previousRoot := a.runtimeSettingsSnapshot().WorkspaceRoot
 	state, err := a.service.SwitchProject(projectID)
 	if err == nil {
@@ -464,6 +481,8 @@ func (a *App) RenameProject(projectID string, name string) (agent.WorkbenchState
 	return a.service.RenameProject(projectID, name)
 }
 func (a *App) ArchiveProjectTasks(projectID string) (agent.WorkbenchState, error) {
+	a.chat.transitionMu.Lock()
+	defer a.chat.transitionMu.Unlock()
 	if err := a.requireIdleChat("归档项目任务"); err != nil {
 		return a.service.WorkbenchState(), err
 	}
@@ -476,6 +495,8 @@ func (a *App) ArchiveProjectTasks(projectID string) (agent.WorkbenchState, error
 	return state, err
 }
 func (a *App) RemoveProject(projectID string) (agent.WorkbenchState, error) {
+	a.chat.transitionMu.Lock()
+	defer a.chat.transitionMu.Unlock()
 	if err := a.requireIdleChat("移除项目"); err != nil {
 		return a.service.WorkbenchState(), err
 	}
@@ -491,12 +512,18 @@ func (a *App) OpenProjectInFileManager(projectID string) error {
 	return a.service.OpenProjectInFileManager(projectID)
 }
 func (a *App) NewSession() (agent.WorkbenchState, error) {
+	a.chat.transitionMu.Lock()
+	defer a.chat.transitionMu.Unlock()
 	return a.service.NewSession()
 }
 func (a *App) SwitchSession(sessionID string) (agent.WorkbenchState, error) {
+	a.chat.transitionMu.Lock()
+	defer a.chat.transitionMu.Unlock()
 	return a.service.SwitchSession(sessionID)
 }
 func (a *App) SwitchProjectSession(projectID, sessionID string) (agent.WorkbenchState, error) {
+	a.chat.transitionMu.Lock()
+	defer a.chat.transitionMu.Unlock()
 	previousRoot := a.runtimeSettingsSnapshot().WorkspaceRoot
 	state, err := a.service.SwitchProjectSession(projectID, sessionID)
 	if err == nil {
@@ -512,18 +539,26 @@ func (a *App) RenameProjectSession(projectID, sessionID, title string) (agent.Wo
 	return a.service.RenameProjectSession(projectID, sessionID, title)
 }
 func (a *App) ArchiveSession(sessionID string, archived bool) (agent.WorkbenchState, error) {
+	a.chat.transitionMu.Lock()
+	defer a.chat.transitionMu.Unlock()
 	return a.service.ArchiveSession(sessionID, archived)
 }
 func (a *App) ArchiveProjectSession(projectID, sessionID string, archived bool) (agent.WorkbenchState, error) {
+	a.chat.transitionMu.Lock()
+	defer a.chat.transitionMu.Unlock()
 	return a.service.ArchiveProjectSession(projectID, sessionID, archived)
 }
 func (a *App) DeleteSession(sessionID string) (agent.WorkbenchState, error) {
+	a.chat.transitionMu.Lock()
+	defer a.chat.transitionMu.Unlock()
 	if err := a.requireIdleChat("删除会话"); err != nil {
 		return a.service.WorkbenchState(), err
 	}
 	return a.service.DeleteSession(sessionID)
 }
 func (a *App) DeleteProjectSession(projectID, sessionID string) (agent.WorkbenchState, error) {
+	a.chat.transitionMu.Lock()
+	defer a.chat.transitionMu.Unlock()
 	if err := a.requireProjectSessionIdleChat(projectID, sessionID); err != nil {
 		return a.service.WorkbenchState(), err
 	}

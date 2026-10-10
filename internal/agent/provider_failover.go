@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"sync"
@@ -48,6 +49,7 @@ func (p *failoverProvider) Stream(ctx context.Context, request protocol.ChatRequ
 		currentCandidate, currentIndex, currentEvents := candidate, index, events
 		for {
 			seenOutput := false
+			scopeAnnounced := false
 			retry := false
 		streamLoop:
 			for {
@@ -72,8 +74,20 @@ func (p *failoverProvider) Stream(ctx context.Context, request protocol.ChatRequ
 						break streamLoop
 					}
 				}
-				if event.Type == "delta" || event.Type == "tool_calls" {
+				if event.Type == "delta" || event.Type == "reasoning" || event.Type == "tool_calls" || event.Type == "continuation" || event.Type == "usage" {
 					seenOutput = true
+				}
+				if event.Type == "continuation" {
+					event.Continuation = scopedContinuation(currentCandidate.route, event.Continuation)
+					scopeAnnounced = true
+				}
+				if !scopeAnnounced && (event.Type == "reasoning" || event.Type == "tool_calls") {
+					select {
+					case <-ctx.Done():
+						return
+					case output <- protocol.StreamEvent{Type: "continuation", Continuation: scopedContinuation(currentCandidate.route, nil)}:
+					}
+					scopeAnnounced = true
 				}
 				select {
 				case <-ctx.Done():
@@ -107,6 +121,7 @@ func (p *failoverProvider) openStream(ctx context.Context, request protocol.Chat
 			return routedProvider{}, index, nil, errors.Join(failures...)
 		}
 		attempt := request
+		attempt.Messages = routeContinuationMessages(request.Messages, candidate.route, index)
 		applyRouteToChatRequest(&attempt, candidate.route)
 		events, err := candidate.provider.Stream(ctx, attempt)
 		if err == nil {
@@ -136,16 +151,53 @@ func (p *failoverProvider) Complete(ctx context.Context, request protocol.ChatRe
 			continue
 		}
 		attempt := request
+		attempt.Messages = routeContinuationMessages(request.Messages, candidate.route, index)
 		applyRouteToChatRequest(&attempt, candidate.route)
 		completion, err := caller.Complete(ctx, attempt)
 		if err == nil {
+			if completion.Continuation != nil || completion.Reasoning != "" || len(completion.ToolCalls) > 0 {
+				completion.Continuation = scopedContinuation(candidate.route, completion.Continuation)
+			}
 			return completion, nil
 		}
 		failures = append(failures, fmt.Errorf("%s: %w", candidate.route.Provider.Name, err))
-		if !isProviderFailoverError(ctx, err) || !p.advance(index, err) {
-			return protocol.CompletionResult{}, errors.Join(failures...)
+		if completion.Content != "" || completion.Reasoning != "" || len(completion.ToolCalls) > 0 || completion.Usage != nil || !isProviderFailoverError(ctx, err) || !p.advance(index, err) {
+			if completion.Continuation != nil || completion.Reasoning != "" || len(completion.ToolCalls) > 0 {
+				completion.Continuation = scopedContinuation(candidate.route, completion.Continuation)
+			}
+			return completion, errors.Join(failures...)
 		}
 	}
+}
+
+func continuationScope(route chatRoute) string {
+	// Bind to credentials without storing them in the checkpoint.
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(route.Provider.ID+"\x00"+route.Provider.BaseURL+"\x00"+route.Provider.Protocol+"\x00"+route.Provider.APIType+"\x00"+route.ModelID+"\x00"+route.APIKey)))
+}
+
+func scopedContinuation(route chatRoute, continuation *protocol.ProviderContinuation) *protocol.ProviderContinuation {
+	result := protocol.ProviderContinuation{}
+	if continuation != nil {
+		result = *continuation
+	}
+	result.Scope = continuationScope(route)
+	return &result
+}
+
+func routeContinuationMessages(messages []protocol.Message, route chatRoute, candidateIndex int) []protocol.Message {
+	result := append([]protocol.Message(nil), messages...)
+	scope := continuationScope(route)
+	for index := range result {
+		continuation := result[index].Continuation
+		if continuation != nil && continuation.Scope == scope {
+			continue
+		}
+		if continuation != nil && continuation.Scope != "" || candidateIndex > 0 {
+			result[index].Continuation = nil
+			result[index].ReasoningContent = ""
+		}
+	}
+	return result
 }
 
 func (p *failoverProvider) ActiveRoute() chatRoute {

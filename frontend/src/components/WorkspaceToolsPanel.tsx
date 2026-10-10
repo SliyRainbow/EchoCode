@@ -1,3 +1,5 @@
+import { PanelTab } from "./ui/PanelTab";
+import { Tabs } from "@kobalte/core/tabs";
 import {
   Check,
   GitBranch,
@@ -28,6 +30,8 @@ import {
   unstageGitPaths,
 } from "../services/workbench";
 import type { GitDiff, GitFileStatus, GitStatus, TerminalSessionState } from "../types";
+import { SettingsSelect, SettingsSegmentedControl } from "./ui/SettingsControls";
+import { SelectableRow } from "./ui/SelectableRow";
 
 type WorkspaceToolsPanelProps = {
   open: boolean;
@@ -44,7 +48,8 @@ const maxWorkspaceToolsHeight = 520;
 
 function readWorkspaceToolsHeight(): number {
   try {
-    const value = Number(window.localStorage.getItem(workspaceToolsHeightKey));
+    const stored = window.localStorage.getItem(workspaceToolsHeightKey);
+    const value = stored?.trim() ? Number(stored) : Number.NaN;
     return Number.isFinite(value) ? Math.min(maxWorkspaceToolsHeight, Math.max(minWorkspaceToolsHeight, value)) : defaultWorkspaceToolsHeight;
   } catch {
     return defaultWorkspaceToolsHeight;
@@ -337,20 +342,20 @@ export function WorkspaceToolsPanel(props: WorkspaceToolsPanelProps) {
             }
           }}
         />
-        <section class="workspace-tools-panel" aria-label="工作区工具">
+        <Tabs as="section" class="workspace-tools-panel" aria-label="工作区工具" value={activeTab()} onChange={(value) => setActiveTab(value as "git" | "terminal")}>
         <header class="workspace-tools-head">
-          <div class="workspace-tools-tabs" role="tablist">
-            <button classList={{ active: activeTab() === "git" }} type="button" onClick={() => setActiveTab("git")}>
+          <Tabs.List class="workspace-tools-tabs panel-tabs" aria-label="工作区工具视图">
+            <PanelTab value="git">
               <GitBranch size={14} />
               Git
               <Show when={(status()?.files.length ?? 0) > 0}><span>{status()?.files.length}</span></Show>
-            </button>
-            <button classList={{ active: activeTab() === "terminal" }} type="button" onClick={() => setActiveTab("terminal")}>
+            </PanelTab>
+            <PanelTab value="terminal">
               <TerminalSquare size={14} />
               终端
               <Show when={terminal()?.running}><i /></Show>
-            </button>
-          </div>
+            </PanelTab>
+          </Tabs.List>
           <div class="workspace-tools-actions">
             <Show when={activeTab() === "git"}>
               <button type="button" title="刷新 Git 状态" disabled={gitBusy()} onClick={() => void refreshGit()}>
@@ -362,7 +367,7 @@ export function WorkspaceToolsPanel(props: WorkspaceToolsPanelProps) {
         </header>
 
         <Show when={activeTab() === "git"} fallback={
-          <div class="terminal-panel">
+          <Tabs.Content value="terminal" class="terminal-panel">
             <div class="terminal-toolbar">
               <div>
                 <TerminalSquare size={14} />
@@ -384,6 +389,7 @@ export function WorkspaceToolsPanel(props: WorkspaceToolsPanelProps) {
               <form class="terminal-input-row" onSubmit={(event) => { event.preventDefault(); void submitTerminalCommand(); }}>
                 <span>&gt;</span>
                 <input
+                  aria-label="终端命令"
                   value={terminalCommand()}
                   disabled={!terminal()?.running || terminalBusy()}
                   spellcheck={false}
@@ -399,9 +405,9 @@ export function WorkspaceToolsPanel(props: WorkspaceToolsPanelProps) {
               </form>
             </Show>
             <Show when={terminalError()}><div class="workspace-tools-error">{terminalError()}</div></Show>
-          </div>
+          </Tabs.Content>
         }>
-          <div class="git-panel">
+          <Tabs.Content value="git" class="git-panel">
             <Show when={status()?.available} fallback={
               <div class="workspace-tools-empty workspace-tools-git-empty">
                 <GitBranch size={20} />
@@ -412,9 +418,7 @@ export function WorkspaceToolsPanel(props: WorkspaceToolsPanelProps) {
               <div class="git-toolbar">
                 <div class="git-branch-control">
                   <GitBranch size={14} />
-                  <select value={status()?.branch || ""} disabled={gitBusy() || props.readOnly} onChange={(event) => void mutateGit(() => switchGitBranch(event.currentTarget.value))}>
-                    <For each={status()?.branches}>{(branch) => <option value={branch.name}>{branch.name}</option>}</For>
-                  </select>
+                  <SettingsSelect ariaLabel="Git 分支" value={status()?.branch || ""} options={(status()?.branches ?? []).map((branch) => ({ value: branch.name, label: branch.name }))} disabled={gitBusy() || props.readOnly} onChange={(branch) => void mutateGit(() => switchGitBranch(branch))} />
                   <span>{status()?.ahead ? `↑${status()?.ahead}` : ""}{status()?.behind ? ` ↓${status()?.behind}` : ""}</span>
                 </div>
                 <form class="git-new-branch" onSubmit={(event) => { event.preventDefault(); void createBranch(); }}>
@@ -440,10 +444,10 @@ export function WorkspaceToolsPanel(props: WorkspaceToolsPanelProps) {
                   <For each={status()?.files} fallback={<div class="git-clean"><Check size={14} />工作区干净</div>}>
                     {(file) => (
                       <div class="git-file-row" classList={{ active: selectedPath() === file.path, conflict: file.conflicted }}>
-                        <button class="git-file-select" type="button" title={file.path} onClick={() => void selectFile(file, file.staged && !file.modified)}>
+                        <SelectableRow selected={selectedPath() === file.path} aria-current={selectedPath() === file.path ? "true" : undefined} class="git-file-select" title={file.path} onClick={() => void selectFile(file, file.staged && !file.modified)}>
                           <span class="git-status-code">{file.untracked ? "U" : file.conflicted ? "!" : `${file.indexStatus === "." ? "" : file.indexStatus}${file.worktreeStatus === "." ? "" : file.worktreeStatus}`}</span>
                           <span>{file.path}</span>
-                        </button>
+                        </SelectableRow>
                         <Show when={!props.readOnly}>
                           <button
                             class="git-file-action"
@@ -466,10 +470,7 @@ export function WorkspaceToolsPanel(props: WorkspaceToolsPanelProps) {
                   <div class="git-diff-head">
                     <strong title={selectedPath()}>{selectedPath() || "Diff"}</strong>
                     <Show when={selectedFile()?.staged && selectedFile()?.modified}>
-                      <div>
-                        <button type="button" classList={{ active: !diffStaged() }} onClick={() => void toggleDiffSide(false)}>工作区</button>
-                        <button type="button" classList={{ active: diffStaged() }} onClick={() => void toggleDiffSide(true)}>暂存区</button>
-                      </div>
+                      <SettingsSegmentedControl ariaLabel="差异来源" value={diffStaged() ? "staged" : "workspace"} options={[{ value: "workspace", label: "工作区" }, { value: "staged", label: "暂存区" }]} onChange={(value) => void toggleDiffSide(value === "staged")} />
                     </Show>
                   </div>
                   <pre>{diff()?.patch || (selectedPath() ? "没有可显示的差异" : "选择文件查看差异")}</pre>
@@ -484,9 +485,9 @@ export function WorkspaceToolsPanel(props: WorkspaceToolsPanelProps) {
               </form>
             </Show>
             <Show when={gitError()}><div class="workspace-tools-error">{gitError()}</div></Show>
-          </div>
+          </Tabs.Content>
         </Show>
-        </section>
+        </Tabs>
       </div>
     </Show>
   );

@@ -91,6 +91,7 @@ type EventPayload struct {
 	// message 类
 	Role         string                `json:"role,omitempty"`
 	Content      string                `json:"content,omitempty"`
+	Reasoning    string                `json:"reasoning,omitempty"`
 	Model        string                `json:"model,omitempty"`
 	DurationMs   int64                 `json:"durationMs,omitempty"`
 	Parts        []MessagePart         `json:"parts,omitempty"`
@@ -99,17 +100,18 @@ type EventPayload struct {
 	FailureState *FailureStrategyState `json:"failureState,omitempty"`
 
 	// file_snapshot 类
-	Path            string `json:"path,omitempty"`
-	BeforeHash      string `json:"beforeHash,omitempty"` // 改动前内容的快照哈希（空=新建文件）
-	AfterHash       string `json:"afterHash,omitempty"`  // 改动后内容的快照哈希
-	LineEnding      string `json:"lineEnding,omitempty"`
-	Encoding        string `json:"encoding,omitempty"`
-	HadBOM          bool   `json:"hadBOM,omitempty"`
-	Existed         bool   `json:"existed,omitempty"` // 改动前文件是否存在（用于 rewind 时决定恢复或删除）
-	Deleted         bool   `json:"deleted,omitempty"` // 改动后文件不存在
-	AfterLineEnding string `json:"afterLineEnding,omitempty"`
-	AfterEncoding   string `json:"afterEncoding,omitempty"`
-	AfterHadBOM     bool   `json:"afterHadBOM,omitempty"`
+	ApprovedExternalPath string `json:"approvedExternalPath,omitempty"`
+	Path                 string `json:"path,omitempty"`
+	BeforeHash           string `json:"beforeHash,omitempty"` // 改动前内容的快照哈希（空=新建文件）
+	AfterHash            string `json:"afterHash,omitempty"`  // 改动后内容的快照哈希
+	LineEnding           string `json:"lineEnding,omitempty"`
+	Encoding             string `json:"encoding,omitempty"`
+	HadBOM               bool   `json:"hadBOM,omitempty"`
+	Existed              bool   `json:"existed,omitempty"` // 改动前文件是否存在（用于 rewind 时决定恢复或删除）
+	Deleted              bool   `json:"deleted,omitempty"` // 改动后文件不存在
+	AfterLineEnding      string `json:"afterLineEnding,omitempty"`
+	AfterEncoding        string `json:"afterEncoding,omitempty"`
+	AfterHadBOM          bool   `json:"afterHadBOM,omitempty"`
 
 	// checkpoint 类
 	Label      string                `json:"label,omitempty"`

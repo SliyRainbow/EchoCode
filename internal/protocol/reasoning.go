@@ -231,6 +231,10 @@ func openAIReasoningOptions(modelID, level string) ReasoningOptions {
 
 func openAIReasoningCapability(modelID string) (maximum string, supportsNone bool, ok bool) {
 	switch {
+	case modelFamily(modelID, "gpt-6-astra"), modelFamily(modelID, "gpt-6.1-sol"):
+		return "max", false, true
+	case modelFamily(modelID, "gpt-6-sol"), modelFamily(modelID, "gpt-6-luna"):
+		return "max", true, true
 	case modelFamily(modelID, "gpt-5.6"):
 		return "max", true, true
 	case modelFamily(modelID, "gpt-5.5"),

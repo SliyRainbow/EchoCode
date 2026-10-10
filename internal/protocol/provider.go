@@ -26,15 +26,16 @@ type ChatRequest struct {
 	ReasoningEffort string            `json:"reasoningEffort,omitempty"`
 	Metadata        map[string]string `json:"metadata,omitempty"`
 	// Responses API controls. They remain internal for other protocols.
-	ToolChoice        string                 `json:"-"`
-	ParallelToolCalls bool                   `json:"-"`
-	Store             bool                   `json:"-"`
-	Include           []string               `json:"-"`
-	PromptCacheKey    string                 `json:"-"`
-	SessionID         string                 `json:"-"`
-	ThreadID          string                 `json:"-"`
-	TurnID            string                 `json:"-"`
-	ResponsesContext  ResponsesClientContext `json:"-"`
+	ToolChoice            string                 `json:"-"`
+	ParallelToolCalls     bool                   `json:"-"`
+	OmitParallelToolCalls bool                   `json:"-"`
+	Store                 bool                   `json:"-"`
+	Include               []string               `json:"-"`
+	PromptCacheKey        string                 `json:"-"`
+	SessionID             string                 `json:"-"`
+	ThreadID              string                 `json:"-"`
+	TurnID                string                 `json:"-"`
+	ResponsesContext      ResponsesClientContext `json:"-"`
 	// Tools 为空时表示普通对话；非空时启用 function-calling（仅支持 ToolCaller 的 provider 生效）。
 	Tools []ToolDefinition `json:"tools,omitempty"`
 	// Internal context budget hints. Providers never serialize these fields.
@@ -74,6 +75,7 @@ type Message struct {
 	ToolCallID   string     `json:"tool_call_id,omitempty"`
 	Name         string     `json:"name,omitempty"`
 	InternalKind string     `json:"-"`
+	ToolError    bool       `json:"tool_error,omitempty"`
 }
 
 type Attachment struct {
@@ -130,6 +132,7 @@ type CompletionResult struct {
 // sub-turns. Each provider only reads continuations matching its own protocol.
 type ProviderContinuation struct {
 	Protocol string
+	Scope    string `json:"scope,omitempty"`
 	Data     json.RawMessage
 }
 

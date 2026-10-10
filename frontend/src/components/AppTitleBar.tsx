@@ -1,4 +1,4 @@
-import { Copy, Maximize2, Minus, X } from "lucide-solid";
+import { ArrowLeft, ArrowRight, Copy, Maximize2, Minus, PanelLeft, X } from "lucide-solid";
 import { Show, createSignal, onCleanup, onMount } from "solid-js";
 
 type DesktopRuntime = {
@@ -13,7 +13,16 @@ function desktopRuntime(): DesktopRuntime | undefined {
   return (window as Window & { runtime?: DesktopRuntime }).runtime;
 }
 
-export function AppTitleBar() {
+export function AppTitleBar(props: {
+  pageTitle?: string;
+  sidebarCollapsed?: boolean;
+  sidebarControls?: string;
+  onToggleSidebar?: () => void;
+  canGoBack?: boolean;
+  canGoForward?: boolean;
+  onBack?: () => void;
+  onForward?: () => void;
+}) {
   const [maximised, setMaximised] = createSignal(false);
   let stateTimer: number | undefined;
 
@@ -50,8 +59,13 @@ export function AppTitleBar() {
 
   return (
     <header class="app-titlebar" aria-label="EchoCode 窗口标题栏">
+      <div class="app-titlebar-navigation">
+        <button type="button" aria-label={props.sidebarCollapsed ? "展开侧栏" : "收起侧栏"} aria-expanded={!props.sidebarCollapsed} aria-controls={props.sidebarControls} title="切换侧栏 (Ctrl+B)" onClick={props.onToggleSidebar}><PanelLeft size={15} /></button>
+        <button type="button" aria-label="后退" title="后退" disabled={!props.canGoBack} onClick={props.onBack}><ArrowLeft size={14} /></button>
+        <button type="button" aria-label="前进" title="前进" disabled={!props.canGoForward} onClick={props.onForward}><ArrowRight size={14} /></button>
+      </div>
       <div class="app-titlebar-drag" onDblClick={toggleMaximise}>
-        <span class="app-titlebar-name">EchoCode</span>
+        <span class="app-titlebar-name" title={props.pageTitle || "EchoCode"}>{props.pageTitle || "EchoCode"}</span>
       </div>
       <div class="app-titlebar-controls" aria-label="窗口控制">
         <button

@@ -7,6 +7,7 @@ package tools
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"os"
@@ -58,6 +59,16 @@ func ReadFileText(path string) (FileText, error) {
 		return FileText{}, err
 	}
 	return decodeFileText(raw), nil
+}
+
+// ReadFileSnapshot preserves exact bytes in the existing string-based event
+// store. Binary snapshots are base64, including text files changed by plugins.
+func ReadFileSnapshot(path string) (FileText, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return FileText{}, err
+	}
+	return FileText{Content: base64.StdEncoding.EncodeToString(raw), Encoding: EncodingBinary, Binary: true}, nil
 }
 
 func decodeFileText(raw []byte) FileText {
@@ -389,6 +400,13 @@ func RestoreFile(policy SandboxPolicy, path string, content string, existed bool
 			return os.Remove(abs)
 		}
 		return nil
+	}
+	if ParseTextEncoding(encoding) == EncodingBinary {
+		data, err := base64.StdEncoding.DecodeString(content)
+		if err != nil {
+			return err
+		}
+		return WriteBytesAtomic(abs, data, 0600)
 	}
 	meta := FileText{LineEnding: ParseLineEnding(lineEnding), Encoding: ParseTextEncoding(encoding), HadBOM: hadBOM}
 	return WriteFileTextAtomic(abs, content, meta)

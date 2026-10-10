@@ -43,11 +43,11 @@ func (s *Service) InstallPlugin(source string) (WorkbenchState, error) {
 	}
 	settings := s.runtimeSettings.Normalized()
 	settings.Plugins = plugins.UpsertSetting(settings.Plugins, plugins.Setting{ID: manifest.ID, Enabled: false})
-	s.runtimeSettings = settings
 	if err := saveRuntimeSettings(s.settingsPath, settings); err != nil {
-		_ = s.pluginManager.Uninstall(manifest.ID)
-		return s.workbenchStateLocked(), fmt.Errorf("保存插件配置失败: %w", err)
+		rollbackErr := s.pluginManager.Uninstall(manifest.ID)
+		return s.workbenchStateLocked(), errors.Join(fmt.Errorf("保存插件配置失败: %w", err), rollbackErr)
 	}
+	s.runtimeSettings = settings
 	s.invalidateProviderSession("已安装插件 " + manifest.Name + "；启用并授权后会加入下一轮工具前缀。")
 	return s.workbenchStateLocked(), nil
 }
@@ -62,16 +62,23 @@ func (s *Service) UninstallPlugin(id string) (WorkbenchState, error) {
 		return s.workbenchStateLocked(), errors.New("插件管理器不可用")
 	}
 	id = strings.ToLower(strings.TrimSpace(id))
-	if err := s.pluginManager.Uninstall(id); err != nil {
-		return s.workbenchStateLocked(), err
-	}
 	settings := s.runtimeSettings.Normalized()
 	settings.Plugins = plugins.RemoveSetting(settings.Plugins, id)
-	s.runtimeSettings = settings
-	if err := saveRuntimeSettings(s.settingsPath, settings); err != nil {
-		return s.workbenchStateLocked(), fmt.Errorf("插件已卸载，但更新配置失败: %w", err)
+	committed := false
+	err = s.pluginManager.UninstallWithCommit(id, func() error {
+		if err := saveRuntimeSettings(s.settingsPath, settings); err != nil {
+			return fmt.Errorf("保存卸载配置失败: %w", err)
+		}
+		s.runtimeSettings = settings
+		committed = true
+		return nil
+	})
+	if committed {
+		s.invalidateProviderSession("插件已卸载；下一轮会重建工具前缀。")
 	}
-	s.invalidateProviderSession("插件已卸载；下一轮会重建工具前缀。")
+	if err != nil {
+		return s.workbenchStateLocked(), err
+	}
 	return s.workbenchStateLocked(), nil
 }
 

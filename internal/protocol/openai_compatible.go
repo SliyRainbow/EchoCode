@@ -1,7 +1,6 @@
 package protocol
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -108,24 +107,32 @@ func (p OpenAICompatibleProvider) Stream(ctx context.Context, request ChatReques
 	}
 
 	reasoning := reasoningOptionsForRequest("openai-compatible", p.BaseURL, p.ReasoningProfile, request)
+	if err := p.validateChatToolSupport(request, reasoning); err != nil {
+		return nil, err
+	}
 	temperature := request.Temperature
-	if reasoning.Effort != "" {
+	if reasoning.Effort != "" && reasoning.Effort != "none" {
 		temperature = 0
 	}
 	body := openAIChatRequest{
-		Model:           request.Model,
-		Messages:        openAIMessagesFromProtocol(request.Messages),
-		Temperature:     temperature,
-		ReasoningEffort: reasoning.Effort,
-		Stream:          true,
-		StreamOptions:   &openAIStreamOptions{IncludeUsage: true},
-		Tools:           request.Tools,
+		Model:               request.Model,
+		Messages:            openAIMessagesFromProtocol(request.Messages, requiresDeepSeekReasoningReplay(p.ReasoningProfile, request)),
+		Temperature:         temperature,
+		ReasoningEffort:     reasoning.Effort,
+		Stream:              true,
+		StreamOptions:       &openAIStreamOptions{IncludeUsage: true},
+		Tools:               request.Tools,
+		ToolChoice:          request.ToolChoice,
+		MaxCompletionTokens: request.MaxOutputTokens,
+	}
+	if len(request.Tools) > 0 && !request.OmitParallelToolCalls {
+		body.ParallelToolCalls = &request.ParallelToolCalls
 	}
 	encoded, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
-	encoded, err = mergeExtraJSONBody(encoded, p.ExtraBodyJSON, protectedBodyKeys("model", "messages", "temperature", "reasoning_effort", "stream", "stream_options", "tools"))
+	encoded, err = mergeExtraJSONBody(encoded, p.ExtraBodyJSON, protectedBodyKeys("model", "messages", "temperature", "reasoning_effort", "stream", "stream_options", "tools", "tool_choice", "parallel_tool_calls"))
 	if err != nil {
 		return nil, err
 	}
@@ -163,23 +170,31 @@ func (p OpenAICompatibleProvider) Complete(ctx context.Context, request ChatRequ
 	}
 
 	reasoning := reasoningOptionsForRequest("openai-compatible", p.BaseURL, p.ReasoningProfile, request)
+	if err := p.validateChatToolSupport(request, reasoning); err != nil {
+		return CompletionResult{}, err
+	}
 	temperature := request.Temperature
-	if reasoning.Effort != "" {
+	if reasoning.Effort != "" && reasoning.Effort != "none" {
 		temperature = 0
 	}
 	body := openAIChatRequest{
-		Model:           request.Model,
-		Messages:        openAIMessagesFromProtocol(request.Messages),
-		Temperature:     temperature,
-		ReasoningEffort: reasoning.Effort,
-		Stream:          false,
-		Tools:           request.Tools,
+		Model:               request.Model,
+		Messages:            openAIMessagesFromProtocol(request.Messages, requiresDeepSeekReasoningReplay(p.ReasoningProfile, request)),
+		Temperature:         temperature,
+		ReasoningEffort:     reasoning.Effort,
+		Stream:              false,
+		Tools:               request.Tools,
+		ToolChoice:          request.ToolChoice,
+		MaxCompletionTokens: request.MaxOutputTokens,
+	}
+	if len(request.Tools) > 0 && !request.OmitParallelToolCalls {
+		body.ParallelToolCalls = &request.ParallelToolCalls
 	}
 	encoded, err := json.Marshal(body)
 	if err != nil {
 		return CompletionResult{}, err
 	}
-	encoded, err = mergeExtraJSONBody(encoded, p.ExtraBodyJSON, protectedBodyKeys("model", "messages", "temperature", "reasoning_effort", "stream", "tools"))
+	encoded, err = mergeExtraJSONBody(encoded, p.ExtraBodyJSON, protectedBodyKeys("model", "messages", "temperature", "reasoning_effort", "stream", "tools", "tool_choice", "parallel_tool_calls"))
 	if err != nil {
 		return CompletionResult{}, err
 	}
@@ -205,14 +220,32 @@ func (p OpenAICompatibleProvider) Complete(ctx context.Context, request ChatRequ
 		Reasoning: msg.ReasoningContent,
 		ToolCalls: msg.ToolCalls,
 	}
+	if result.Content == "" {
+		result.Content = msg.Refusal
+	}
 	if payload.Usage != nil {
 		result.Usage = payload.Usage.toTokenUsage()
+	}
+	if failure := finishReasonFailure("openai-compatible", payload.Choices[0].FinishReason); failure != nil {
+		return result, NewProviderError(*failure.ProviderError)
 	}
 	return result, nil
 }
 
 func (p OpenAICompatibleProvider) endpoint(path string) string {
 	return strings.TrimRight(strings.TrimSpace(p.BaseURL), "/") + path
+}
+
+func (p OpenAICompatibleProvider) validateChatToolSupport(request ChatRequest, reasoning ReasoningOptions) error {
+	if len(request.Tools) == 0 || reasoningEndpointHost(p.BaseURL) != "api.openai.com" {
+		return nil
+	}
+	model := normalizeReasoningModelID(request.Model)
+	requiresResponses := modelFamily(model, "gpt-6-astra") || modelFamily(model, "gpt-6.1-sol") || ((modelFamily(model, "gpt-6-sol") || modelFamily(model, "gpt-6-luna")) && reasoning.Effort != "none")
+	if requiresResponses {
+		return NewProviderError(ProviderErrorInfo{Provider: p.Name(), Type: "configuration_error", Code: "responses_required", Message: "该模型在当前推理设置下执行工具需要 Responses API；请在“模型与连接”中将 API 类型改为 Responses。"})
+	}
+	return nil
 }
 
 func (p OpenAICompatibleProvider) client() *http.Client {
@@ -252,10 +285,12 @@ func (p OpenAICompatibleProvider) doRequestWithRetryHeaders(
 			return nil, err
 		}
 		p.applyHeaders(req, accept)
+		// Defaults precede the provider's explicit compatibility settings.
+		// Apply this on every attempt, for model discovery as well as chat.
+		p.applyClientIdentity(req)
 		if err := applyExtraHeaders(req, p.ExtraHeaders); err != nil {
 			return nil, err
 		}
-		p.applyClientIdentity(req)
 		for name, values := range internalHeaders {
 			for _, value := range values {
 				if validInternalHeaderValue(value) {
@@ -365,11 +400,16 @@ func validInternalHeaderValue(value string) bool {
 }
 
 func parseOpenAICompatibleStream(ctx context.Context, body io.Reader, events chan<- StreamEvent) {
-	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	scanner := newSSEReader(body)
 	toolCalls := map[int]*streamToolCallAccumulator{}
 	toolCallsEmitted := false
-	for scanner.Scan() {
+	finishReason := ""
+	var terminalFailure *StreamEvent
+	for {
+		frame, ok := scanner.Next()
+		if !ok {
+			break
+		}
 		select {
 		case <-ctx.Done():
 			events <- StreamEvent{Type: "error", Error: "读取 OpenAI-compatible 流式响应被中断：请求上下文已取消或超时。"}
@@ -377,15 +417,15 @@ func parseOpenAICompatibleStream(ctx context.Context, body io.Reader, events cha
 		default:
 		}
 
-		line := strings.TrimSpace(scanner.Text())
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		payload := strings.TrimSpace(frame.Data)
 		if payload == "" {
 			continue
 		}
 		if payload == "[DONE]" {
+			if terminalFailure != nil {
+				events <- *terminalFailure
+				return
+			}
 			if !toolCallsEmitted {
 				emitAccumulatedToolCalls(events, toolCalls)
 			}
@@ -398,6 +438,11 @@ func parseOpenAICompatibleStream(ctx context.Context, body io.Reader, events cha
 			events <- StreamEvent{Type: "error", Error: "无法解析 OpenAI-compatible 流式响应: " + err.Error()}
 			return
 		}
+		if chunk.Error != nil {
+			info := providerErrorFromUpstream("openai-compatible", chunk.Error, 0, "")
+			events <- StreamEvent{Type: "error", Error: info.Message, ProviderError: &info}
+			return
+		}
 		for _, choice := range chunk.Choices {
 			if choice.Delta.ReasoningContent != "" {
 				events <- StreamEvent{Type: "reasoning", Delta: choice.Delta.ReasoningContent}
@@ -405,13 +450,20 @@ func parseOpenAICompatibleStream(ctx context.Context, body io.Reader, events cha
 			if choice.Delta.Content != "" {
 				events <- StreamEvent{Type: "delta", Delta: choice.Delta.Content}
 			}
+			if choice.Delta.Refusal != "" {
+				events <- StreamEvent{Type: "delta", Delta: choice.Delta.Refusal}
+			}
 			accumulateToolCallDeltas(toolCalls, choice.Delta.ToolCalls)
 			if choice.FinishReason != "" {
-				if len(toolCalls) > 0 && !toolCallsEmitted {
+				finishReason = choice.FinishReason
+				terminalFailure = finishReasonFailure("openai-compatible", finishReason)
+				if terminalFailure == nil && len(toolCalls) > 0 && !toolCallsEmitted {
 					emitAccumulatedToolCalls(events, toolCalls)
 					toolCallsEmitted = true
 				}
-				events <- StreamEvent{Type: "finish", FinishReason: choice.FinishReason}
+				if terminalFailure == nil {
+					events <- StreamEvent{Type: "finish", FinishReason: choice.FinishReason}
+				}
 			}
 		}
 		if chunk.Usage != nil {
@@ -420,6 +472,14 @@ func parseOpenAICompatibleStream(ctx context.Context, body io.Reader, events cha
 	}
 	if err := scanner.Err(); err != nil {
 		events <- StreamEvent{Type: "error", Error: "读取 OpenAI-compatible 流式响应失败: " + err.Error()}
+		return
+	}
+	if terminalFailure != nil {
+		events <- *terminalFailure
+		return
+	}
+	if finishReason == "" {
+		events <- interruptedStream("openai-compatible")
 		return
 	}
 	if !toolCallsEmitted {
@@ -621,22 +681,25 @@ func positiveIntFromAny(value any) int {
 }
 
 type openAIChatRequest struct {
-	Model           string               `json:"model"`
-	Messages        []openAIMessage      `json:"messages"`
-	Temperature     float64              `json:"temperature,omitempty"`
-	ReasoningEffort string               `json:"reasoning_effort,omitempty"`
-	Stream          bool                 `json:"stream"`
-	StreamOptions   *openAIStreamOptions `json:"stream_options,omitempty"`
-	Tools           []ToolDefinition     `json:"tools,omitempty"`
+	ToolChoice          string               `json:"tool_choice,omitempty"`
+	ParallelToolCalls   *bool                `json:"parallel_tool_calls,omitempty"`
+	MaxCompletionTokens int                  `json:"max_completion_tokens,omitempty"`
+	Model               string               `json:"model"`
+	Messages            []openAIMessage      `json:"messages"`
+	Temperature         float64              `json:"temperature,omitempty"`
+	ReasoningEffort     string               `json:"reasoning_effort,omitempty"`
+	Stream              bool                 `json:"stream"`
+	StreamOptions       *openAIStreamOptions `json:"stream_options,omitempty"`
+	Tools               []ToolDefinition     `json:"tools,omitempty"`
 }
 
 type openAIMessage struct {
-	Role             string     `json:"role"`
-	Content          any        `json:"content"`
-	ReasoningContent string     `json:"reasoning_content,omitempty"`
-	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID       string     `json:"tool_call_id,omitempty"`
-	Name             string     `json:"name,omitempty"`
+	Role             string                   `json:"role"`
+	Content          any                      `json:"content"`
+	ReasoningContent *string                  `json:"reasoning_content,omitempty"`
+	ToolCalls        []chatCompletionToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string                   `json:"tool_call_id,omitempty"`
+	Name             string                   `json:"name,omitempty"`
 }
 
 type openAIContentPart struct {
@@ -649,13 +712,26 @@ type openAIImageURL struct {
 	URL string `json:"url"`
 }
 
-func openAIMessagesFromProtocol(messages []Message) []openAIMessage {
+// DeepSeek tool sub-turns can return no reasoning text. An explicitly empty
+// field still has to survive wire encoding; omitting it causes a 400 on replay.
+func requiresDeepSeekReasoningReplay(profile string, request ChatRequest) bool {
+	return len(request.Tools) > 0 && (strings.EqualFold(strings.TrimSpace(profile), "deepseek") || strings.HasPrefix(normalizeReasoningModelID(request.Model), "deepseek-"))
+}
+
+func openAIMessagesFromProtocol(messages []Message, requireReasoning ...bool) []openAIMessage {
 	converted := make([]openAIMessage, 0, len(messages))
+	var toolImages []openAIMessage
 	for _, message := range messages {
+		if message.Role != "tool" && len(toolImages) > 0 {
+			converted = append(converted, toolImages...)
+			toolImages = nil
+		}
 		content := any(message.Content)
 		if len(message.Attachments) > 0 {
 			parts := make([]openAIContentPart, 0, len(message.Attachments)+1)
-			if message.Content != "" {
+			if message.Role == "tool" {
+				parts = append(parts, openAIContentPart{Type: "text", Text: "Visual output from tool call " + message.ToolCallID})
+			} else if message.Content != "" {
 				parts = append(parts, openAIContentPart{Type: "text", Text: message.Content})
 			}
 			for _, attachment := range message.Attachments {
@@ -666,17 +742,27 @@ func openAIMessagesFromProtocol(messages []Message) []openAIMessage {
 					},
 				})
 			}
-			content = parts
+			if message.Role == "tool" {
+				toolImages = append(toolImages, openAIMessage{Role: "user", Content: parts})
+			} else {
+				content = parts
+			}
+		}
+		var reasoning *string
+		if message.ReasoningContent != "" || (message.Role == "assistant" && len(requireReasoning) > 0 && requireReasoning[0]) {
+			value := message.ReasoningContent
+			reasoning = &value
 		}
 		converted = append(converted, openAIMessage{
 			Role:             message.Role,
 			Content:          content,
-			ReasoningContent: message.ReasoningContent,
-			ToolCalls:        message.ToolCalls,
+			ReasoningContent: reasoning,
+			ToolCalls:        chatCompletionToolCalls(message.ToolCalls),
 			ToolCallID:       message.ToolCallID,
 			Name:             message.Name,
 		})
 	}
+	converted = append(converted, toolImages...)
 	return converted
 }
 
@@ -685,9 +771,11 @@ type openAIStreamOptions struct {
 }
 
 type openAIStreamChunk struct {
+	Error   *upstreamError `json:"error,omitempty"`
 	Choices []struct {
 		Delta struct {
 			Content          string                `json:"content"`
+			Refusal          string                `json:"refusal"`
 			ReasoningContent string                `json:"reasoning_content"`
 			ToolCalls        []streamToolCallDelta `json:"tool_calls"`
 		} `json:"delta"`
@@ -701,6 +789,7 @@ type openAICompletionResponse struct {
 	Choices []struct {
 		Message struct {
 			Content          string     `json:"content"`
+			Refusal          string     `json:"refusal"`
 			ReasoningContent string     `json:"reasoning_content"`
 			ToolCalls        []ToolCall `json:"tool_calls"`
 		} `json:"message"`

@@ -2,24 +2,29 @@
 import { For, Index, Match, Show, Suspense, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, onMount } from "solid-js";
 import type { JSX } from "solid-js";
 import { Portal } from "solid-js/web";
+import { Tabs } from "@kobalte/core/tabs";
+import { Meter } from "@kobalte/core/meter";
+import { ThemePicker } from "./components/ThemePicker";
+import { BrandMark } from "./components/BrandMark";
+import { SidebarResizer, type SidebarResizeControl } from "./components/SidebarResizer";
+import { SettingsWorkspace } from "./components/ui/SettingsWorkspace";
+import { InlineNotice } from "./components/ui/InlineNotice";
+import { SecretInput } from "./components/ui/SecretInput";
+import { ExtensionSettingsPanel } from "./components/ExtensionCenter";
+export { ExtensionSettingsPanel };
 import {
-  AlertTriangle, Archive, ArrowLeft, ArrowRight, ArrowUp, BarChart3, Bot, Braces,
-  Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Clock3, Command, Cpu, Database, Download, ExternalLink, Eye, FileCode2, FileText,
-  Blocks, Folder, FolderOpen, Gauge, GitBranch, Globe2, Hash, HardDrive, Keyboard, KeyRound, LayoutList,
-  ListFilter, LockKeyhole, MessageSquarePlus, Monitor, Moon, Network, Palette, Plug,
-  Play, Plus, RefreshCw, Save, Search, Settings, ShieldCheck, SlidersHorizontal, Sparkles,
-  Square, Sun, Terminal, Trash2, User, WrapText, Wrench, X, Zap,
-  Users,
-} from "lucide-solid";
+  SettingsButton, SettingsControlLabel, SettingsSlider,
+  SettingsIconButton as IconButton, SettingsSelect as SelectControl,
+  SettingsSegmentedControl as SegmentedControl, SettingsSwitch as SwitchControl,
+} from "./components/ui/SettingsControls";
+export { IconButton, SelectControl, SegmentedControl, SwitchControl };
+import { AlertTriangle, ArrowRight, Bot, Braces, Check, CheckCircle2, ChevronDown, ChevronRight, Clock3, Cpu, Database, Download, ExternalLink, Eye, FileCode2, FileText, Blocks, FolderOpen, Gauge, Globe2, Hash, Keyboard, KeyRound, LockKeyhole, Monitor, Network, Palette, Play, Plus, RefreshCw, Save, Search, ShieldCheck, Sparkles, Square, Trash2, WrapText, Wrench, X, Zap, Users } from "lucide-solid";
 import { ReasoningMenu } from "./components/ReasoningMenu";
 import type {
   AppInfo,
   AutomationState,
   AutomationTask,
   DeepSeekSessionState,
-	ExtensionActionResult,
-	ExtensionCatalogState,
-	ExtensionCatalogPackage,
   MCPServerSetting,
   ModelProviderSetting,
   OpenSourceLicense,
@@ -36,27 +41,18 @@ import type {
   UsageMetrics,
   WorkbenchState,
 } from "./types";
-import type { SettingsCategory, ThemeMode, ProviderPreset } from "./ui-types";
+import type { SettingsCategory, ThemeMode, ProviderPreset, WorkbenchSection } from "./ui-types";
 import type { UIAppearancePreferences, UIFontPreset, UIFontSmoothing, UIScaleMode } from "./ui-appearance";
 import { uiFontPresetOptions } from "./ui-appearance";
 import {
   sandboxOptions, filesystemOptions, approvalOptions, toolResultOptions,
   stablePrefixOptions, providerProtocolOptions, providerAPITypeOptions, providerReasoningProfileOptions,
-  providerPresets, sitePermissionOptions, settingsGroups,
+  providerPresets, sitePermissionOptions, settingsGroups, extensionNavigation,
 } from "./constants";
-import {
-  formatPercent, formatInteger, formatCost, shortHash, runtimeLabel, sectionLabel,
-  cacheStatusLabel, statusLabel, settingsGroupTitle, settingsCategoryDescription,
-  findSettingsItem, baseNameFromPath, parentPath, compactPath, formatTokenWindow,
-  selectedModelProvider, selectedModelName, modelOptionsForProvider,
-  shortModelName, permissionLabel, providerBaseURLHint, providerBaseURLPlaceholder,
-  providerFromPreset, createEmptyProvider, defaultAPITypeForProtocol,
-  supportsModelFetchForProtocol, parseEnvLines, parseHeaderLines, prefixStatusLabel, thinkingStatusLabel,
-} from "./format";
+import { formatPercent, formatInteger, formatCost, shortHash, runtimeLabel, sectionLabel, cacheStatusLabel, settingsGroupTitle, settingsCategoryDescription, findSettingsItem, formatTokenWindow, modelOptionsForProvider, permissionLabel, providerBaseURLHint, providerBaseURLPlaceholder, providerFromPreset, createEmptyProvider, defaultAPITypeForProtocol, supportsModelFetchForProtocol, parseEnvLines, parseHeaderLines } from "./format";
 import { inferModelContextWindow, contextWindowSourceLabel } from "./model-context";
 import {
   browserClearData, checkForUpdates, deleteAutomationTask, deleteBrowserCredential, downloadUpdate, getAppInfo, getOpenSourceLicenses,
-	getExtensionCatalog, installExtension, refreshExtensionCatalog, revealExtension, runExtensionProjectAction, uninstallExtension,
   getAutomationState, getUpdateState, installUpdate, onAutomationState, onUpdateState, openAppRepositoryPage,
   openUpdateReleasePage, openURLInSystemBrowser, revealAppConfigFile, revealAppExecutable, runAutomationTaskNow, saveAutomationTask,
   saveBrowserCredential, setAutomationTaskEnabled, stopAutomationTask, openSkillFile, readSkillDetail, revealSkillFile,
@@ -70,37 +66,36 @@ const SkillCodeViewer = lazy(async () => {
 });
 
 export type SettingsCenterProps = {
+  sidebarCollapsed: boolean;
+  section: WorkbenchSection;
   activeCategory: SettingsCategory;
+  error?: string;
+  dismissError?: () => void;
 	applyWorkbenchState: (state: WorkbenchState) => void;
-  apiKeyDraft: string;
   cacheHealth: WorkbenchState["cacheHealth"];
   cacheHitRate: number;
   cacheTarget: number;
   confirmAction: (request: ConfirmationRequest) => Promise<boolean>;
   configFiles: WorkbenchState["configFiles"];
   sandboxCapabilities: WorkbenchState["sandboxCapabilities"];
-  clearingKey: boolean;
   clearingProviderID: string;
   clearingProviderBillingID: string;
-  clearKey: () => void;
   clearProviderKey: (providerID: string) => Promise<void> | void;
   clearProviderBillingKey: (providerID: string) => Promise<void> | void;
   deleteProvider: (providerID: string) => Promise<void> | void;
   deletingProviderID: string;
   contextPreview: WorkbenchState["contextPreview"] | undefined;
-  deepSeek: WorkbenchState["deepSeek"];
   deepSeekSession: DeepSeekSessionState;
   diagnostics: string[];
   hasCacheTokens: boolean;
   mcpServers: WorkbenchState["mcpServers"];
-  models: WorkbenchState["deepSeek"]["models"];
   projectMemory: WorkbenchState["projectMemory"];
   projectTree: ProjectNode[];
   uiAppearance: UIAppearancePreferences;
   effectiveUIScale: number;
   updateUIAppearance: (patch: Partial<UIAppearancePreferences>) => void;
   resetUIAppearance: () => void;
-  nudgeSidebarWidth: (direction: -1 | 1) => void;
+  sidebarResizeControl: SidebarResizeControl;
   profile: WorkbenchState["reasoning"];
   refreshMCPServer: (serverID: string) => Promise<void> | void;
   refreshingMCPID: string;
@@ -117,21 +112,16 @@ export type SettingsCenterProps = {
   reasoningOptions: WorkbenchState["reasoningOptions"];
   runtimeDraft: RuntimeSettings;
   runtimeDirty: boolean;
-  saveKey: () => void;
   saveRuntime: () => void;
-  savingKey: boolean;
   savingRuntime: boolean;
   selectCategory: (category: SettingsCategory) => void;
   sessionHasCacheTokens: boolean;
-  setAPIKeyDraft: (value: string) => void;
-  sidebarWidth: number;
   skills: WorkbenchState["skillsIndex"];
   snapshots: WorkbenchState["mcpSnapshots"];
   updateRuntimeDraft: (patch: Partial<RuntimeSettings>) => void;
   updateReasoning: (level: ReasoningLevel) => void;
   updatingReasoning: boolean;
   resetRuntimeDraft: () => void;
-  resetSidebarWidth: () => void;
   saveProviderKey: (providerID: string) => Promise<void> | void;
   saveProviderBillingKey: (providerID: string) => Promise<void> | void;
   savingProviderID: string;
@@ -143,8 +133,6 @@ export type SettingsCenterProps = {
   reconcileUsageBilling: (input: UsageBillingReconciliationInput) => Promise<void> | void;
   syncProviderModels: (providerID: string) => Promise<void> | void;
   syncingProviderID: string;
-  testConnection: () => void;
-  testingDeepSeek: boolean;
   themeMode: ThemeMode;
   toggleTheme: () => void;
   usage: UsageMetrics;
@@ -153,10 +141,30 @@ export type SettingsCenterProps = {
 
 export function SettingsCenter(props: SettingsCenterProps) {
   const activeItem = createMemo(() => findSettingsItem(props.activeCategory));
+  const showSaveBar = createMemo(() => props.runtimeDirty || [
+    "config", "environment", "git", "models", "team", "skills", "plugins", "mcp",
+    "browser", "computer", "memory",
+  ].includes(props.activeCategory));
 
   return (
-    <div class="settings-center">
-      <nav class="settings-nav" aria-label="设置分类">
+    <div class="settings-center" classList={{ "is-workspace-page": props.section !== "settings", "sidebar-collapsed": props.section === "settings" && props.sidebarCollapsed }}>
+      <Show when={props.section === "extensions"}>
+        <nav class="workspace-page-nav" aria-label="扩展分类">
+          <For each={extensionNavigation}>{(item) => (
+            <button type="button" classList={{ active: props.activeCategory === item.id }} aria-current={props.activeCategory === item.id ? "page" : undefined} onClick={() => props.selectCategory(item.id)}>{item.icon()}<span>{item.label}</span></button>
+          )}</For>
+        </nav>
+      </Show>
+      <Show when={props.section === "settings"}>
+      <label id="settings-mobile-navigation" class="settings-mobile-nav" inert={props.sidebarCollapsed} aria-hidden={props.sidebarCollapsed}>
+        <span>设置</span>
+        <select aria-label="设置分类" value={props.activeCategory} onChange={(event) => props.selectCategory(event.currentTarget.value as SettingsCategory)}>
+          <For each={settingsGroups}>{(group) => (
+            <optgroup label={group.title}><For each={group.items}>{(item) => <option value={item.id}>{item.label}</option>}</For></optgroup>
+          )}</For>
+        </select>
+      </label>
+      <nav id="settings-sidebar" class="settings-nav" aria-label="设置分类" inert={props.sidebarCollapsed} aria-hidden={props.sidebarCollapsed}>
         <For each={settingsGroups}>
           {(group) => (
             <div class="settings-nav-group">
@@ -178,35 +186,23 @@ export function SettingsCenter(props: SettingsCenterProps) {
           )}
         </For>
       </nav>
+      <SidebarResizer control={props.sidebarResizeControl} settings hidden={props.sidebarCollapsed} />
+      </Show>
 
-      <section class="settings-content" aria-label={activeItem().label}>
+      <section class="settings-content" data-settings-page={props.activeCategory} aria-label={activeItem().label}>
         <div class="settings-page-head">
           <span>{settingsGroupTitle(props.activeCategory)}</span>
           <h1>{activeItem().label}</h1>
           <p>{settingsCategoryDescription(props.activeCategory)}</p>
+          <Show when={props.error}>
+            <InlineNotice message={props.error || ""} dismissLabel="关闭设置错误提示" onDismiss={props.dismissError} />
+          </Show>
         </div>
         <Switch>
-          <Match when={props.activeCategory === "general"}>
-            <GeneralSettingsPanel
-              apiKeyDraft={props.apiKeyDraft}
-              clearingKey={props.clearingKey}
-              clearKey={props.clearKey}
-              deepSeek={props.deepSeek}
-              deepSeekSession={props.deepSeekSession}
-              saveKey={props.saveKey}
-              savingKey={props.savingKey}
-              setAPIKeyDraft={props.setAPIKeyDraft}
-              testConnection={props.testConnection}
-              testingDeepSeek={props.testingDeepSeek}
-            />
-          </Match>
           <Match when={props.activeCategory === "appearance"}>
             <AppearanceSettingsPanel
               effectiveUIScale={props.effectiveUIScale}
-              nudgeSidebarWidth={props.nudgeSidebarWidth}
               resetUIAppearance={props.resetUIAppearance}
-              resetSidebarWidth={props.resetSidebarWidth}
-              sidebarWidth={props.sidebarWidth}
               themeMode={props.themeMode}
               toggleTheme={props.toggleTheme}
               uiAppearance={props.uiAppearance}
@@ -223,14 +219,6 @@ export function SettingsCenter(props: SettingsCenterProps) {
               saveRuntime={props.saveRuntime}
               savingRuntime={props.savingRuntime}
               updateRuntimeDraft={props.updateRuntimeDraft}
-            />
-          </Match>
-          <Match when={props.activeCategory === "profile"}>
-            <ProfileSettingsPanel
-              deepSeek={props.deepSeek}
-              profile={props.profile}
-              runtimeDraft={props.runtimeDraft}
-              themeMode={props.themeMode}
             />
           </Match>
           <Match when={props.activeCategory === "shortcuts"}>
@@ -346,9 +334,6 @@ export function SettingsCenter(props: SettingsCenterProps) {
               importSkillMarkdown={props.importSkillMarkdown}
             />
           </Match>
-          <Match when={props.activeCategory === "commands"}>
-            <CommandSettingsPanel runtimeDraft={props.runtimeDraft} skills={props.skills} snapshots={props.snapshots} />
-          </Match>
           <Match when={props.activeCategory === "memory"}>
             <MemorySettingsPanel
               memory={props.projectMemory}
@@ -361,7 +346,7 @@ export function SettingsCenter(props: SettingsCenterProps) {
             />
           </Match>
           <Match when={props.activeCategory === "index"}>
-            <ContextPanel contextPreview={props.contextPreview} />
+            <ContextPanel contextPreview={props.contextPreview} session={props.deepSeekSession} />
           </Match>
           <Match when={props.activeCategory === "usage"}>
             <CachePanel
@@ -402,9 +387,6 @@ export function SettingsCenter(props: SettingsCenterProps) {
               updateRuntimeDraft={props.updateRuntimeDraft}
             />
           </Match>
-          <Match when={props.activeCategory === "archive"}>
-            <ArchiveSettingsPanel />
-          </Match>
           <Match when={props.activeCategory === "about"}>
             <AboutSettingsPanel
               resetRuntimeDraft={props.resetRuntimeDraft}
@@ -419,96 +401,19 @@ export function SettingsCenter(props: SettingsCenterProps) {
             <AutomationSettingsPanel confirmAction={props.confirmAction} projectTree={props.projectTree} runtimeDraft={props.runtimeDraft} />
           </Match>
         </Switch>
+        <Show when={showSaveBar()}>
+          <footer class="settings-save-footer" aria-label="保存运行设置">
+            <RuntimeSaveActions dirty={props.runtimeDirty} reset={props.resetRuntimeDraft} save={props.saveRuntime} saving={props.savingRuntime} />
+          </footer>
+        </Show>
       </section>
-    </div>
-  );
-}
-
-export function GeneralSettingsPanel(props: {
-  apiKeyDraft: string;
-  clearingKey: boolean;
-  clearKey: () => void;
-  deepSeek: WorkbenchState["deepSeek"];
-  deepSeekSession: DeepSeekSessionState;
-  saveKey: () => void;
-  savingKey: boolean;
-  setAPIKeyDraft: (value: string) => void;
-  testConnection: () => void;
-  testingDeepSeek: boolean;
-}) {
-  return (
-    <div class="settings-page-body">
-      <PanelSection icon={<KeyRound size={16} />} title="DeepSeek">
-        <div class="connection-card">
-          <StatusPill
-            icon={props.deepSeek.lastCheckStatus === "ok" ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
-            label={statusLabel(props.deepSeek.lastCheckStatus)}
-            tone={props.deepSeek.lastCheckStatus === "ok" ? "good" : props.deepSeek.lastCheckStatus === "error" ? "bad" : "watch"}
-          />
-          <strong>{props.deepSeek.configured ? "API Key 已保存" : "API Key 未配置"}</strong>
-          <p>{props.deepSeek.lastCheckMessage}</p>
-          <code>{props.deepSeek.baseUrl}</code>
-        </div>
-        <div class="key-row">
-          <input
-            type="password"
-            autocomplete="off"
-            spellcheck={false}
-            placeholder="sk-..."
-            value={props.apiKeyDraft}
-            onInput={(event) => props.setAPIKeyDraft(event.currentTarget.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && props.apiKeyDraft.trim()) {
-                props.saveKey();
-              }
-            }}
-          />
-          <IconButton title="保存 API Key" disabled={!props.apiKeyDraft.trim() || props.savingKey} onClick={props.saveKey}>
-            <Save size={15} />
-          </IconButton>
-          <IconButton title="测试连接" disabled={!props.deepSeek.configured || props.testingDeepSeek} onClick={props.testConnection}>
-            <RefreshCw size={15} classList={{ spinning: props.testingDeepSeek }} />
-          </IconButton>
-          <IconButton title="清除 API Key" danger disabled={!props.deepSeek.configured || props.clearingKey} onClick={props.clearKey}>
-            <Trash2 size={15} />
-          </IconButton>
-        </div>
-      </PanelSection>
-
-      <PanelSection icon={<Gauge size={16} />} title="会话">
-        <MetricGrid
-          items={[
-            ["状态", props.deepSeekSession.active ? "运行中" : "待初始化"],
-            ["轮次", formatInteger(props.deepSeekSession.turnCount)],
-            ["消息", formatInteger(props.deepSeekSession.messageCount)],
-            ["前缀", prefixStatusLabel(props.deepSeekSession)],
-            ["模型", props.deepSeekSession.model || "下一轮选择"],
-            ["思考", thinkingStatusLabel(props.deepSeekSession)],
-          ]}
-        />
-      </PanelSection>
-      <PanelSection icon={<Database size={16} />} title="上下文管理">
-        <MetricGrid
-          items={[
-            ["模型窗口", props.deepSeekSession.contextWindowTokens ? formatTokenWindow(props.deepSeekSession.contextWindowTokens) : "下一轮识别"],
-            ["可用输入", props.deepSeekSession.inputBudgetTokens ? formatTokenWindow(props.deepSeekSession.inputBudgetTokens) : "待计算"],
-            ["估算占用", props.deepSeekSession.inputBudgetTokens ? `${(props.deepSeekSession.contextUsagePercent ?? 0).toFixed(1)}%` : "待计算"],
-            ["长度来源", contextWindowSourceLabel(props.deepSeekSession.contextWindowSource)],
-            ["压缩次数", `${formatInteger(props.deepSeekSession.compressionCount ?? 0)} 次`],
-            ["已压缩消息", formatInteger(props.deepSeekSession.compressedMessageCount ?? 0)],
-          ]}
-        />
-      </PanelSection>
     </div>
   );
 }
 
 export function AppearanceSettingsPanel(props: {
   effectiveUIScale: number;
-  nudgeSidebarWidth: (direction: -1 | 1) => void;
   resetUIAppearance: () => void;
-  resetSidebarWidth: () => void;
-  sidebarWidth: number;
   themeMode: ThemeMode;
   toggleTheme: () => void;
   uiAppearance: UIAppearancePreferences;
@@ -517,24 +422,7 @@ export function AppearanceSettingsPanel(props: {
   return (
     <div class="settings-page-body">
       <PanelSection icon={<Palette size={16} />} title="主题">
-        <div class="choice-grid two">
-          <button
-            type="button"
-            classList={{ active: props.themeMode === "dark" }}
-            onClick={() => props.themeMode === "light" && props.toggleTheme()}
-          >
-            <Moon size={15} />
-            <span>暗色</span>
-          </button>
-          <button
-            type="button"
-            classList={{ active: props.themeMode === "light" }}
-            onClick={() => props.themeMode === "dark" && props.toggleTheme()}
-          >
-            <Sun size={15} />
-            <span>浅色</span>
-          </button>
-        </div>
+        <ThemePicker value={props.themeMode} onChange={(theme) => { if (theme !== props.themeMode) props.toggleTheme(); }} />
       </PanelSection>
 
       <SettingsSection title="界面缩放">
@@ -555,19 +443,7 @@ export function AppearanceSettingsPanel(props: {
             title="当前缩放"
             description={`实际显示 ${Math.round(props.effectiveUIScale * 100)}%`}
             control={
-              <div class="appearance-range-control">
-                <input
-                  type="range"
-                  min="80"
-                  max="130"
-                  step="5"
-                  value={props.uiAppearance.manualScale}
-                  disabled={props.uiAppearance.scaleMode === "auto"}
-                  aria-label="手动界面缩放"
-                  onInput={(event) => props.updateUIAppearance({ manualScale: Number(event.currentTarget.value) })}
-                />
-                <output>{props.uiAppearance.scaleMode === "auto" ? `${Math.round(props.effectiveUIScale * 100)}%` : `${props.uiAppearance.manualScale}%`}</output>
-              </div>
+<SettingsSlider label="手动界面缩放" min={80} max={130} step={5} value={props.uiAppearance.scaleMode === "auto" ? Math.round(props.effectiveUIScale * 100) : props.uiAppearance.manualScale} disabled={props.uiAppearance.scaleMode === "auto"} format={(value) => `${value}%`} onChange={(manualScale) => props.updateUIAppearance({ manualScale })} />
             }
           />
         </SettingsCard>
@@ -606,20 +482,14 @@ export function AppearanceSettingsPanel(props: {
             title="界面字号"
             description={`${props.uiAppearance.fontSize}px`}
             control={
-              <div class="appearance-range-control">
-                <input type="range" min="12" max="18" step="1" value={props.uiAppearance.fontSize} aria-label="界面字号" onInput={(event) => props.updateUIAppearance({ fontSize: Number(event.currentTarget.value) })} />
-                <output>{props.uiAppearance.fontSize}px</output>
-              </div>
+<SettingsSlider label="界面字号" min={12} max={18} value={props.uiAppearance.fontSize} format={(value) => `${value}px`} onChange={(fontSize) => props.updateUIAppearance({ fontSize })} />
             }
           />
           <SettingsRow
             title="正文行高"
             description={props.uiAppearance.lineHeight.toFixed(2)}
             control={
-              <div class="appearance-range-control">
-                <input type="range" min="1.3" max="2" step="0.05" value={props.uiAppearance.lineHeight} aria-label="正文行高" onInput={(event) => props.updateUIAppearance({ lineHeight: Number(event.currentTarget.value) })} />
-                <output>{props.uiAppearance.lineHeight.toFixed(2)}</output>
-              </div>
+<SettingsSlider label="正文行高" min={1.3} max={2} step={0.05} value={props.uiAppearance.lineHeight} format={(value) => value.toFixed(2)} onChange={(lineHeight) => props.updateUIAppearance({ lineHeight })} />
             }
           />
           <SettingsRow
@@ -655,10 +525,7 @@ export function AppearanceSettingsPanel(props: {
             title="代码字号"
             description={`${props.uiAppearance.codeFontSize}px`}
             control={
-              <div class="appearance-range-control">
-                <input type="range" min="11" max="17" step="1" value={props.uiAppearance.codeFontSize} aria-label="代码字号" onInput={(event) => props.updateUIAppearance({ codeFontSize: Number(event.currentTarget.value) })} />
-                <output>{props.uiAppearance.codeFontSize}px</output>
-              </div>
+<SettingsSlider label="代码字号" min={11} max={17} value={props.uiAppearance.codeFontSize} format={(value) => `${value}px`} onChange={(codeFontSize) => props.updateUIAppearance({ codeFontSize })} />
             }
           />
         </SettingsCard>
@@ -667,21 +534,6 @@ export function AppearanceSettingsPanel(props: {
         </div>
       </SettingsSection>
 
-      <PanelSection icon={<LayoutList size={16} />} title="侧栏">
-        <SettingField label="左侧栏宽度" value={`${Math.round(props.sidebarWidth)}px`}>
-          <div class="inline-control-row">
-            <IconButton title="缩小侧栏" onClick={() => props.nudgeSidebarWidth(-1)}>
-              <ArrowLeft size={15} />
-            </IconButton>
-            <IconButton title="放大侧栏" onClick={() => props.nudgeSidebarWidth(1)}>
-              <ArrowRight size={15} />
-            </IconButton>
-            <button type="button" onClick={props.resetSidebarWidth}>
-              恢复默认
-            </button>
-          </div>
-        </SettingField>
-      </PanelSection>
     </div>
   );
 }
@@ -870,12 +722,7 @@ export function ConfigSettingsPanel(props: {
             }
           />
         </SettingsCard>
-        <RuntimeSaveActions
-          dirty={props.runtimeDirty}
-          reset={props.resetRuntimeDraft}
-          save={props.saveRuntime}
-          saving={props.savingRuntime}
-        />
+
       </SettingsSection>
 
       <SettingsSection title="工作空间依赖项">
@@ -932,59 +779,17 @@ export function EnvironmentSettingsPanel(props: {
 }) {
   return (
     <div class="settings-page-body">
-      <SettingsSection
-        title="选择项目"
-        action={
-          <button
-            class="settings-soft-button"
-            type="button"
-            onClick={() => props.updateRuntimeDraft({ extraWritableRoots: [...props.runtimeDraft.extraWritableRoots, ""] })}
-          >
-            添加项目
-          </button>
-        }
-      >
-        <div class="settings-project-list">
-          <div class="settings-project-row">
-            <Folder size={16} />
-            <strong>{baseNameFromPath(props.runtimeDraft.workspaceRoot) || "EchoCode"}</strong>
-            <span>{compactPath(parentPath(props.runtimeDraft.workspaceRoot))}</span>
-          </div>
-          <For each={props.runtimeDraft.extraWritableRoots}>
-            {(root, index) => (
-              <div class="settings-project-row">
-                <Folder size={16} />
-                <strong>{baseNameFromPath(root)}</strong>
-                <span>{compactPath(parentPath(root))}</span>
-                <button
-                  class="settings-square-button"
-                  type="button"
-                  title="移除项目"
-                  onClick={() =>
-                    props.updateRuntimeDraft({
-                      extraWritableRoots: props.runtimeDraft.extraWritableRoots.filter((_, itemIndex) => itemIndex !== index()),
-                    })
-                  }
-                >
-                  <X size={16} />
-                </button>
-              </div>
-            )}
-          </For>
-        </div>
-      </SettingsSection>
-
-      <SettingsSection title="路径">
+      <SettingsSection title="当前工作区">
         <SettingsCard>
           <SettingsRow
             title="工作区根目录"
-            description={compactPath(props.runtimeDraft.workspaceRoot)}
+            description="通过工作区中的项目选择器打开或切换目录。"
             control={
               <input
                 class="settings-input row-control"
                 value={props.runtimeDraft.workspaceRoot}
                 spellcheck={false}
-                onInput={(event) => props.updateRuntimeDraft({ workspaceRoot: event.currentTarget.value })}
+                readOnly aria-label="当前工作区根目录"
               />
             }
           />
@@ -1007,12 +812,7 @@ export function EnvironmentSettingsPanel(props: {
             }
           />
         </SettingsCard>
-        <RuntimeSaveActions
-          dirty={props.runtimeDirty}
-          reset={props.resetRuntimeDraft}
-          save={props.saveRuntime}
-          saving={props.savingRuntime}
-        />
+
       </SettingsSection>
     </div>
   );
@@ -1133,49 +933,7 @@ export function GitSettingsPanel(props: {
         />
       </SettingsSection>
 
-      <SettingsSection title="工作区路径">
-        <SettingsCard>
-          <SettingsRow
-            title="工作区根目录"
-            description={compactPath(props.runtimeDraft.workspaceRoot)}
-            control={
-              <input
-                class="settings-input row-control"
-                value={props.runtimeDraft.workspaceRoot}
-                spellcheck={false}
-                onInput={(event) => props.updateRuntimeDraft({ workspaceRoot: event.currentTarget.value })}
-              />
-            }
-          />
-          <SettingsRow
-            title="额外可写目录"
-            description={`${props.runtimeDraft.extraWritableRoots.length} 项`}
-            control={
-              <textarea
-                class="settings-textarea row-control"
-                rows={3}
-                spellcheck={false}
-                value={props.runtimeDraft.extraWritableRoots.join("\n")}
-                placeholder="每行一个绝对路径"
-                onInput={(event) =>
-                  props.updateRuntimeDraft({
-                    extraWritableRoots: event.currentTarget.value
-                      .split(/\r?\n/)
-                      .map((item) => item.trim())
-                      .filter(Boolean),
-                  })
-                }
-              />
-            }
-          />
-        </SettingsCard>
-        <RuntimeSaveActions
-          dirty={props.runtimeDirty}
-          reset={props.resetRuntimeDraft}
-          save={props.saveRuntime}
-          saving={props.savingRuntime}
-        />
-      </SettingsSection>
+
     </div>
   );
 }
@@ -1391,7 +1149,7 @@ export function ModelSettingsPanel(props: {
   };
 
   return (
-    <div class="settings-page-body model-settings-page">
+    <SettingsWorkspace class="model-settings-page" overview>
       <PanelSection icon={<Cpu size={16} />} title="推理强度">
         <div class="settings-inline-card">
           <div>
@@ -1405,18 +1163,19 @@ export function ModelSettingsPanel(props: {
             onChange={props.updateReasoning}
           />
         </div>
-        <MetricGrid
-          items={[
-			["工具执行", "按任务需要"],
+        <details class="settings-policy-details">
+          <summary>查看执行策略<ChevronDown size={12} /></summary>
+          <MetricGrid items={[
+            ["工具执行", "按任务需要"],
             ["上下文策略", props.profile.budget.contextPolicy],
             ["缓存策略", props.profile.budget.cachePolicy],
             ["规划器", props.profile.budget.planner ? "开启" : "关闭"],
-          ]}
-        />
+          ]} />
+        </details>
       </PanelSection>
 
       <SettingsSection
-        class="model-editor-section"
+        class="model-editor-section settings-workspace-main"
         title="供应商接入"
         action={
           <button class="settings-soft-button" type="button" onClick={addProvider}>
@@ -1426,14 +1185,7 @@ export function ModelSettingsPanel(props: {
         }
       >
         <div class="provider-onboarding">
-          <div class="settings-mini-segment">
-            <button type="button" classList={{ active: entryMode() === "preset" }} onClick={() => setEntryMode("preset")}>
-              推荐预设
-            </button>
-            <button type="button" classList={{ active: entryMode() === "custom" }} onClick={() => setEntryMode("custom")}>
-              自定义供应商
-            </button>
-          </div>
+          <SegmentedControl ariaLabel="供应商接入方式" value={entryMode()} options={[{ value: "preset", label: "推荐预设" }, { value: "custom", label: "自定义供应商" }]} onChange={(value) => setEntryMode(value === "preset" ? "preset" : "custom")} />
 
           <Show when={entryMode() === "preset"}>
             <div class="provider-preset-grid">
@@ -1543,10 +1295,11 @@ export function ModelSettingsPanel(props: {
                   />
                   <SettingsRow
                     title="额外请求头（可选）"
-                    description="用于 OpenRouter 等要求来源标识的兼容转发。一行一个 Header: value；API Key 仍建议通过上方密钥保存。"
+                    description="可按模型服务要求覆盖 User-Agent 和来源标识。每行填写 Header: value；API Key 使用密钥栏保存。"
                     control={
                       <textarea
                         class="settings-textarea row-control provider-compat-textarea"
+                        aria-label="额外请求头"
                         value={provider().extraHeaders ?? ""}
                         spellcheck={false}
                         placeholder={"HTTP-Referer: https://example.com\nX-Title: EchoCode"}
@@ -1572,18 +1325,19 @@ export function ModelSettingsPanel(props: {
                     description={provider().apiKeyConfigured ? "密钥已保存到该供应商的本地凭据项，不写入 JSON 明文" : "输入后点保存设置或保存密钥；本地兼容服务可留空"}
                     control={
                       <div class="settings-row-stack">
-                        <input
-                          class="settings-input row-control"
-                          type="password"
+                        <SecretInput
+                          label="模型密钥"
+                          scope={provider().id}
                           value={props.providerKeyDrafts[provider().id] ?? ""}
                           placeholder={provider().apiKeyConfigured ? "输入新 Key 可覆盖" : "sk-..."}
-                          onInput={(event) => props.setProviderKeyDraft(provider().id, event.currentTarget.value)}
+                          disabled={props.savingProviderID === provider().id || props.clearingProviderID === provider().id}
+                          onChange={(value) => props.setProviderKeyDraft(provider().id, value)}
                         />
                         <div class="settings-row-actions">
                           <button
                             class="settings-soft-button"
                             type="button"
-                            disabled={props.savingProviderID === provider().id}
+                            disabled={!props.providerKeyDrafts[provider().id]?.trim() || props.savingProviderID === provider().id}
                             onClick={() => void props.saveProviderKey(provider().id)}
                           >
                             <Save size={14} />
@@ -1609,13 +1363,12 @@ export function ModelSettingsPanel(props: {
                           description={billingCredentialDescription(Boolean(provider().billingKeyConfigured))}
                           control={
                             <div class="settings-row-stack">
-                              <input
-                                class="settings-input row-control"
-                                type="password"
-                                autocomplete="off"
+                              <SecretInput
+                                label="账单密钥"
+                                scope={provider().id}
                                 value={props.providerBillingKeyDrafts[provider().id] ?? ""}
                                 placeholder={provider().billingKeyConfigured ? "输入新账单 Key 可覆盖" : "可选：账单读取 Key"}
-                                onInput={(event) => props.setProviderBillingKeyDraft(provider().id, event.currentTarget.value)}
+                                onChange={(value) => props.setProviderBillingKeyDraft(provider().id, value)}
                               />
                               <div class="settings-row-actions">
                                 <button
@@ -1837,7 +1590,7 @@ export function ModelSettingsPanel(props: {
                     <span>当前</span>
                     <span>模型 ID</span>
                     <span>显示名称</span>
-                    <span>上下文 / 来源</span>
+                    <span>上下文窗口</span>
                     <span />
                   </div>
                   <Index each={provider().models} fallback={<p class="empty-line">暂无模型，可手动添加或从上游获取。</p>}>
@@ -1880,14 +1633,14 @@ export function ModelSettingsPanel(props: {
                           placeholder="显示名称"
                           onInput={(event) => updateProviderModel(provider(), index, { displayName: event.currentTarget.value })}
                         />
-                        <div class="model-context-cell">
                           <input
-                            class="settings-input numeric"
+                            class="settings-input numeric model-context-input"
                             type="number"
                             min="0"
                             step="1"
                             value={model().contextWindowTokens}
-                            title="模型上下文窗口；输入 0 会重新自动识别"
+                            title={`模型上下文窗口；来源：${contextWindowSourceLabel(model().contextWindowSource)}；输入 0 会重新自动识别`}
+                            aria-label={`${model().displayName || model().id || "未命名模型"} 上下文窗口`}
                             onInput={(event) => {
                               const tokens = Math.max(0, Number(event.currentTarget.value) || 0);
                               if (tokens > 0) {
@@ -1904,8 +1657,6 @@ export function ModelSettingsPanel(props: {
                               });
                             }}
                           />
-                          <small>{contextWindowSourceLabel(model().contextWindowSource)}</small>
-                        </div>
                         <IconButton title={`删除模型 ${model().displayName || model().id}`} danger onClick={() => removeProviderModel(provider(), index)}>
                           <Trash2 size={14} />
                         </IconButton>
@@ -1917,15 +1668,10 @@ export function ModelSettingsPanel(props: {
             )}
           </Show>
         </div>
-        <RuntimeSaveActions
-          dirty={props.runtimeDirty}
-          reset={props.resetRuntimeDraft}
-          save={props.saveRuntime}
-          saving={props.savingRuntime}
-        />
+
       </SettingsSection>
 
-      <SettingsSection class="model-provider-section" title="已配置供应商">
+      <SettingsSection class="model-provider-section settings-workspace-sidebar" title="已配置供应商">
         <div class="provider-grid">
           <For each={props.runtimeDraft.model.providers}>
             {(provider) => (
@@ -1965,7 +1711,7 @@ export function ModelSettingsPanel(props: {
         </div>
       </SettingsSection>
 
-    </div>
+    </SettingsWorkspace>
   );
 }
 
@@ -2057,30 +1803,20 @@ export function TeamSettingsPanel(props: {
                     <small>{meta().description}</small>
                   </span>
                   <div class="team-role-route">
-                    <select
-                      class="settings-select"
-                      aria-label={`${meta().label}供应商`}
+                    <SelectControl
+                      ariaLabel={`${meta().label}供应商`}
                       value={role.providerId}
                       disabled={!role.enabled}
-                      onChange={(event) => updateRole(role.role, { providerId: event.currentTarget.value, modelId: "" })}
-                    >
-                      <option value="">跟随当前供应商</option>
-                      <For each={props.runtimeDraft.model.providers.filter((item) => item.enabled)}>
-                        {(item) => <option value={item.id}>{item.name}</option>}
-                      </For>
-                    </select>
-                    <select
-                      class="settings-select"
-                      aria-label={`${meta().label}模型`}
+                      options={[{ value: "", label: "跟随当前供应商" }, ...props.runtimeDraft.model.providers.filter(item => item.enabled).map(item => ({ value: item.id, label: item.name }))]}
+                      onChange={value => updateRole(role.role, { providerId: value, modelId: "" })}
+                    />
+                    <SelectControl
+                      ariaLabel={`${meta().label}模型`}
                       value={role.modelId}
                       disabled={!role.enabled || !role.providerId || models().length === 0}
-                      onChange={(event) => updateRole(role.role, { modelId: event.currentTarget.value })}
-                    >
-                      <option value="">{role.providerId ? "使用供应商默认模型" : "跟随当前模型"}</option>
-                      <For each={models()}>
-                        {(model) => <option value={model.id}>{model.displayName || model.id}</option>}
-                      </For>
-                    </select>
+                      options={[{ value: "", label: role.providerId ? "使用供应商默认模型" : "跟随当前模型" }, ...models().map(model => ({ value: model.id, label: model.displayName || model.id }))]}
+                      onChange={value => updateRole(role.role, { modelId: value })}
+                    />
                   </div>
                   <Show
                     when={!meta().locked}
@@ -2093,12 +1829,7 @@ export function TeamSettingsPanel(props: {
             }}
           </For>
         </div>
-        <RuntimeSaveActions
-          dirty={props.runtimeDirty}
-          reset={props.resetRuntimeDraft}
-          save={props.saveRuntime}
-          saving={props.savingRuntime}
-        />
+
       </SettingsSection>
     </div>
   );
@@ -2319,12 +2050,7 @@ export function SkillsSettingsPanel(props: {
         <Show when={detailError()}>
           <p class="settings-inline-error">{detailError()}</p>
         </Show>
-        <RuntimeSaveActions
-          dirty={props.runtimeDirty}
-          reset={props.resetRuntimeDraft}
-          save={props.saveRuntime}
-          saving={props.savingRuntime}
-        />
+
       </PanelSection>
 
       <PanelSection icon={<FileText size={16} />} title="加载链路">
@@ -2507,374 +2233,6 @@ function mcpStatusTone(state?: string): "good" | "bad" | "watch" | "neutral" {
   }
 }
 
-type ExtensionCatalogTab = "featured" | "installed" | "mcp" | "plugin" | "skill";
-
-const extensionCatalogTabs: Array<{id: ExtensionCatalogTab; label: string}> = [
-	{id: "featured", label: "推荐"},
-	{id: "installed", label: "已安装"},
-	{id: "mcp", label: "MCP"},
-	{id: "plugin", label: "插件"},
-	{id: "skill", label: "Skills"},
-];
-
-function extensionTypeLabel(type: string) {
-	switch (type) {
-		case "mcp": return "MCP";
-		case "plugin": return "插件";
-		case "skill": return "Skill";
-		default: return type || "扩展";
-	}
-}
-
-function extensionTypeIcon(type: string) {
-	switch (type) {
-		case "mcp": return <Plug size={16} />;
-		case "plugin": return <Blocks size={16} />;
-		case "skill": return <Wrench size={16} />;
-		default: return <Download size={16} />;
-	}
-}
-
-function extensionPermissionLabel(id: string) {
-	const labels: Record<string, string> = {
-		"process.spawn": "启动本地进程",
-		"workspace.read": "读取已授权项目",
-		"workspace.write": "修改已授权项目",
-		"workspace.metadata.write": "写入项目索引元数据",
-		"network": "访问网络",
-	};
-	return labels[id] ?? id;
-}
-
-function extensionCatalogSourceLabel(source?: string) {
-	switch (source) {
-		case "network": return "在线目录";
-		case "cache": return "本地缓存";
-		case "preview": return "界面预览";
-		default: return "等待加载";
-	}
-}
-
-function extensionCheckedAt(value?: string) {
-	if (!value) return "尚未检查";
-	const date = new Date(value);
-	if (Number.isNaN(date.getTime())) return "尚未检查";
-	return date.toLocaleString("zh-CN", {month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"});
-}
-
-export function ExtensionSettingsPanel(props: {
-	applyWorkbenchState: (state: WorkbenchState) => void;
-	confirmAction: (request: ConfirmationRequest) => Promise<boolean>;
-}) {
-	const [catalog, setCatalog] = createSignal<ExtensionCatalogState>();
-	const [activeTab, setActiveTab] = createSignal<ExtensionCatalogTab>("featured");
-	const [query, setQuery] = createSignal("");
-	const [selectedID, setSelectedID] = createSignal("");
-	const [loading, setLoading] = createSignal(false);
-	const [busy, setBusy] = createSignal("");
-	const [error, setError] = createSignal("");
-	const [lastAction, setLastAction] = createSignal<{
-		packageName: string;
-		label: string;
-		result: ExtensionActionResult;
-	}>();
-
-	const packages = createMemo(() => catalog()?.packages ?? []);
-	const filteredPackages = createMemo(() => {
-		const tab = activeTab();
-		const search = query().trim().toLocaleLowerCase();
-		return packages().filter((item) => {
-			const tabMatch = tab === "featured"
-				? item.featured
-				: tab === "installed"
-					? Boolean(item.installed)
-					: item.type === tab;
-			if (!tabMatch) return false;
-			if (!search) return true;
-			return [item.name, item.summary, item.publisher, item.manifest.description, ...item.manifest.capabilities]
-				.join(" ")
-				.toLocaleLowerCase()
-				.includes(search);
-		});
-	});
-	const selectedPackage = createMemo(() => packages().find((item) => item.id === selectedID()));
-	const tabCount = (tab: ExtensionCatalogTab) => packages().filter((item) => tab === "featured"
-		? item.featured
-		: tab === "installed"
-			? Boolean(item.installed)
-			: item.type === tab).length;
-
-	createEffect(() => {
-		const visible = filteredPackages();
-		if (!visible.some((item) => item.id === selectedID())) {
-			setSelectedID(visible[0]?.id ?? "");
-		}
-	});
-
-	const loadCatalog = async (refresh: boolean) => {
-		setLoading(true);
-		setError("");
-		try {
-			setCatalog(refresh ? await refreshExtensionCatalog() : await getExtensionCatalog());
-		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : String(cause));
-		} finally {
-			setLoading(false);
-		}
-	};
-
-	onMount(() => void loadCatalog(false));
-
-	const install = async (item: ExtensionCatalogPackage) => {
-		const updating = Boolean(item.installed && item.updateAvailable);
-		const permissionDetail = item.manifest.permissions.length > 0
-			? item.manifest.permissions.map((permission) => `${permission.required ? "必需" : "可选"}：${extensionPermissionLabel(permission.id)} - ${permission.reason}`).join("\n")
-			: "此扩展未声明额外权限。";
-		const confirmed = await props.confirmAction({
-			title: updating ? `更新 ${item.name}？` : `安装 ${item.name}？`,
-			message: `${item.publisher} · ${item.manifest.version} · ${extensionTypeLabel(item.type)}`,
-			detail: permissionDetail,
-			confirmLabel: updating ? "更新" : "安装",
-			tone: "default",
-		});
-		if (!confirmed) return;
-		setBusy(`${item.id}:install`);
-		setError("");
-		try {
-			const result = await installExtension(item.id);
-			setCatalog(result.catalog);
-			props.applyWorkbenchState(result.state);
-		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : String(cause));
-		} finally {
-			setBusy("");
-		}
-	};
-
-	const uninstall = async (item: ExtensionCatalogPackage) => {
-		const confirmed = await props.confirmAction({
-			title: `卸载 ${item.name}？`,
-			message: "扩展程序及其 EchoCode 配置将被移除。",
-			detail: "项目内由扩展生成的数据默认保留。例如 CodeGraph 的 .codegraph 索引不会被删除。",
-			confirmLabel: "卸载",
-			tone: "danger",
-		});
-		if (!confirmed) return;
-		setBusy(`${item.id}:uninstall`);
-		setError("");
-		try {
-			const result = await uninstallExtension(item.id);
-			setCatalog(result.catalog);
-			props.applyWorkbenchState(result.state);
-			setLastAction(undefined);
-		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : String(cause));
-		} finally {
-			setBusy("");
-		}
-	};
-
-	const runProjectAction = async (item: ExtensionCatalogPackage, action: NonNullable<ExtensionCatalogPackage["manifest"]["projectActions"]>[number]) => {
-		if (action.requiresConfirmation) {
-			const confirmed = await props.confirmAction({
-				title: `${action.label}？`,
-				message: `将在当前项目中运行 ${item.name}。`,
-				detail: action.writes?.length ? `可能写入：${action.writes.join("、")}` : "该操作不会修改项目文件。",
-				confirmLabel: action.label,
-				tone: "default",
-			});
-			if (!confirmed) return;
-		}
-		setBusy(`${item.id}:action:${action.id}`);
-		setError("");
-		try {
-			const result = await runExtensionProjectAction(item.id, action.id);
-			setLastAction({packageName: item.name, label: action.label, result});
-		} catch (cause) {
-			setError(cause instanceof Error ? cause.message : String(cause));
-		} finally {
-			setBusy("");
-		}
-	};
-
-	return (
-		<div class="settings-page-body extension-center-page">
-			<div class="extension-toolbar">
-				<div class="extension-tabs" role="tablist" aria-label="扩展分类">
-					<For each={extensionCatalogTabs}>
-						{(tab) => (
-							<button
-								type="button"
-								role="tab"
-								aria-selected={activeTab() === tab.id}
-								classList={{active: activeTab() === tab.id}}
-								onClick={() => setActiveTab(tab.id)}
-							>
-								<span>{tab.label}</span>
-								<small>{tabCount(tab.id)}</small>
-							</button>
-						)}
-					</For>
-				</div>
-				<div class="extension-search-row">
-					<label class="extension-search">
-						<Search size={14} />
-						<input value={query()} placeholder="搜索扩展、能力或开发者" onInput={(event) => setQuery(event.currentTarget.value)} />
-						<Show when={query()}>
-							<button type="button" title="清除搜索" onClick={() => setQuery("")}><X size={13} /></button>
-						</Show>
-					</label>
-					<IconButton title="刷新扩展目录" disabled={loading()} onClick={() => void loadCatalog(true)}>
-						<RefreshCw size={14} classList={{spinning: loading()}} />
-					</IconButton>
-				</div>
-			</div>
-
-			<Show when={catalog()?.warning}>
-				<p class="extension-catalog-warning"><AlertTriangle size={14} />{catalog()?.warning}</p>
-			</Show>
-			<Show when={error()}>
-				<p class="settings-inline-error extension-error"><AlertTriangle size={14} />{error()}</p>
-			</Show>
-
-			<div class="extension-workspace">
-				<section class="extension-list-pane" aria-label="扩展列表">
-					<div class="extension-catalog-meta">
-						<span>{extensionCatalogSourceLabel(catalog()?.source)}</span>
-						<small>{extensionCheckedAt(catalog()?.checkedAt)}</small>
-					</div>
-					<div class="extension-list">
-						<For each={filteredPackages()} fallback={<p class="settings-empty-box">没有符合条件的扩展</p>}>
-							{(item) => (
-								<button
-									class="extension-list-option"
-									classList={{active: selectedID() === item.id}}
-									type="button"
-									onClick={() => setSelectedID(item.id)}
-								>
-									<span class={`extension-mark ${item.type}`}>{extensionTypeIcon(item.type)}</span>
-									<span class="extension-list-copy">
-										<span class="extension-list-title"><strong>{item.name}</strong><small>{item.manifest.version}</small></span>
-										<small>{item.publisher} · {extensionTypeLabel(item.type)}</small>
-										<span>{item.summary}</span>
-									</span>
-									<Show when={item.installed} fallback={<ChevronRight size={14} />}>
-										<span classList={{update: item.updateAvailable}} class="extension-install-state">{item.updateAvailable ? "可更新" : "已安装"}</span>
-									</Show>
-								</button>
-							)}
-						</For>
-					</div>
-				</section>
-
-				<section class="extension-detail-pane" aria-label="扩展详情">
-					<Show when={selectedPackage()} fallback={<p class="settings-empty-box">选择一个扩展查看详情</p>}>
-						{(item) => (
-							<div class="extension-detail">
-								<div class="extension-detail-head">
-									<span class={`extension-detail-mark ${item().type}`}>{extensionTypeIcon(item().type)}</span>
-									<div>
-										<div class="extension-title-row">
-											<h2>{item().name}</h2>
-											<span>{extensionTypeLabel(item().type)}</span>
-											<Show when={item().sourceVerified}><span class="verified"><ShieldCheck size={12} />来源已核验</span></Show>
-										</div>
-										<p>{item().manifest.description}</p>
-										<small>{item().publisher} · v{item().manifest.version} · {item().manifest.license.spdx}</small>
-									</div>
-								</div>
-
-								<div class="extension-primary-actions">
-									<Show when={!item().installed}>
-										<button class="settings-soft-button primary" type="button" disabled={!item().platformAvailable || Boolean(busy())} onClick={() => void install(item())}>
-											<Download size={14} />{busy() === `${item().id}:install` ? "安装中" : item().platformAvailable ? "安装" : "当前平台不可用"}
-										</button>
-									</Show>
-									<Show when={item().installed && item().updateAvailable}>
-										<button class="settings-soft-button primary" type="button" disabled={Boolean(busy())} onClick={() => void install(item())}>
-											<RefreshCw size={14} classList={{spinning: busy() === `${item().id}:install`}} />{busy() === `${item().id}:install` ? "更新中" : "更新"}
-										</button>
-									</Show>
-									<Show when={item().installed}>
-										<button class="settings-soft-button" type="button" disabled={Boolean(busy())} onClick={() => void revealExtension(item().id).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))}><FolderOpen size={14} />打开目录</button>
-										<button class="settings-danger-button" type="button" disabled={Boolean(busy())} onClick={() => void uninstall(item())}><Trash2 size={14} />{busy() === `${item().id}:uninstall` ? "卸载中" : "卸载"}</button>
-									</Show>
-								</div>
-
-								<div class="extension-facts">
-									<div><span>安装状态</span><strong>{item().installed ? `${item().installed?.platform}/${item().installed?.arch}` : "未安装"}</strong></div>
-									<div><span>发布通道</span><strong>{item().manifest.channel === "stable" ? "稳定版" : item().manifest.channel}</strong></div>
-									<div><span>更新校验</span><strong>SHA-256</strong></div>
-									<div><span>数据位置</span><strong>{item().installed ? "本机 LocalAppData" : "安装后创建"}</strong></div>
-								</div>
-
-								<div class="extension-detail-section">
-									<div class="extension-section-title"><strong>能力</strong><span>{item().manifest.capabilities.length} 项</span></div>
-									<div class="extension-capabilities">
-										<For each={item().manifest.capabilities} fallback={<span>清单未声明能力</span>}>
-											{(capability) => <span>{capability}</span>}
-										</For>
-									</div>
-								</div>
-
-								<div class="extension-detail-section">
-									<div class="extension-section-title"><strong>权限</strong><span>安装前确认</span></div>
-									<div class="extension-permissions">
-										<For each={item().manifest.permissions} fallback={<p class="settings-empty-box">不申请额外权限</p>}>
-											{(permission) => (
-												<div class="extension-permission-row">
-													<span classList={{optional: !permission.required}}>{permission.required ? <LockKeyhole size={14} /> : <ShieldCheck size={14} />}</span>
-													<div><strong>{extensionPermissionLabel(permission.id)}</strong><small>{permission.reason}</small></div>
-													<code>{permission.required ? "必需" : "按操作授权"}</code>
-												</div>
-											)}
-										</For>
-									</div>
-								</div>
-
-								<Show when={item().installed && (item().manifest.projectActions?.length ?? 0) > 0}>
-									<div class="extension-detail-section">
-										<div class="extension-section-title"><strong>当前项目</strong><span>手动执行</span></div>
-										<div class="extension-project-actions">
-											<For each={item().manifest.projectActions}>
-												{(action) => (
-													<button class="settings-soft-button" type="button" disabled={Boolean(busy())} onClick={() => void runProjectAction(item(), action)}>
-														<Show when={busy() === `${item().id}:action:${action.id}`} fallback={action.id === "index-status" ? <Search size={14} /> : action.id === "sync-index" ? <RefreshCw size={14} /> : <Play size={14} />}>
-															<RefreshCw size={14} class="spinning" />
-														</Show>
-														{action.label}
-													</button>
-												)}
-											</For>
-										</div>
-									</div>
-								</Show>
-
-								<div class="extension-detail-section extension-source-section">
-									<div class="extension-section-title"><strong>来源</strong><span>{item().manifest.source.thirdParty ? "第三方开源" : "EchoCode 官方"}</span></div>
-									<button type="button" onClick={() => void openURLInSystemBrowser(item().manifest.source.repository)}><GitBranch size={14} /><span><strong>源码仓库</strong><small>{item().manifest.source.repository}</small></span><ExternalLink size={13} /></button>
-									<button type="button" onClick={() => void openURLInSystemBrowser(item().manifest.source.release)}><Download size={14} /><span><strong>固定版本发布页</strong><small>{item().manifest.source.release}</small></span><ExternalLink size={13} /></button>
-								</div>
-
-								<Show when={lastAction() && lastAction()?.packageName === item().name}>
-									{(visible) => {
-										const action = () => lastAction()!;
-										return visible() ? (
-											<details class="extension-action-output">
-												<summary><CheckCircle2 size={14} /><span>{action().label}完成</span><small>退出码 {action().result.exitCode} · {action().result.durationMs} ms</small><ChevronDown size={14} /></summary>
-												<pre>{action().result.output || "操作已完成，没有输出。"}</pre>
-											</details>
-										) : null;
-									}}
-								</Show>
-							</div>
-						)}
-					</Show>
-				</section>
-			</div>
-		</div>
-	);
-}
 
 function pluginStatusLabel(state?: string) {
 	switch (state) {
@@ -2951,9 +2309,9 @@ export function PluginSettingsPanel(props: {
 	};
 
 	return (
-		<div class="settings-page-body plugin-settings-page">
+		<SettingsWorkspace class="plugin-settings-page">
 			<SettingsSection
-				class="plugin-list-section"
+				class="plugin-list-section settings-workspace-sidebar"
 				title="已发现插件"
 				action={
 					<div class="settings-row-actions">
@@ -2987,7 +2345,7 @@ export function PluginSettingsPanel(props: {
 				</div>
 			</SettingsSection>
 
-			<SettingsSection class="plugin-detail-section" title="插件详情">
+			<SettingsSection class="plugin-detail-section settings-workspace-main" title="插件详情">
 				<Show when={activePlugin()} fallback={<p class="settings-empty-box">选择插件后查看详情</p>}>
 					{(plugin) => {
 						const setting = () => pluginSetting(plugin().id);
@@ -3076,15 +2434,15 @@ export function PluginSettingsPanel(props: {
 				</Show>
 			</SettingsSection>
 
-			<SettingsSection class="plugin-host-section" title="运行边界">
+			<SettingsSection class="plugin-host-section settings-workspace-secondary" title="运行边界">
 				<SettingsCard>
 					<SettingsRow title="单次执行超时" description="超时或停止会话时，EchoCode 会终止插件进程树" control={<div class="settings-row-stack"><input class="settings-input row-control numeric" type="number" min="5" max="3600" value={props.runtimeDraft.plugins.maxExecutionSeconds} onInput={(event) => props.updateRuntimeDraft({plugins: {...props.runtimeDraft.plugins, maxExecutionSeconds: Number(event.currentTarget.value)}})} /><span class="settings-muted-value">秒</span></div>} />
-					<SettingsRow title="输出上限" description="限制单条 JSON-RPC 响应进入 Agent 上下文的大小" control={<select class="settings-select" value={props.runtimeDraft.plugins.maxOutputBytes} onChange={(event) => props.updateRuntimeDraft({plugins: {...props.runtimeDraft.plugins, maxOutputBytes: Number(event.currentTarget.value)}})}><option value={262144}>256 KB</option><option value={1048576}>1 MB</option><option value={4194304}>4 MB</option><option value={16777216}>16 MB</option></select>} />
+					<SettingsRow title="输出上限" description="限制单条 JSON-RPC 响应进入 Agent 上下文的大小" control={<SelectControl value={String(props.runtimeDraft.plugins.maxOutputBytes)} options={[{ value: "262144", label: "256 KB" }, { value: "1048576", label: "1 MB" }, { value: "4194304", label: "4 MB" }, { value: "16777216", label: "16 MB" }]} onChange={value => props.updateRuntimeDraft({plugins: {...props.runtimeDraft.plugins, maxOutputBytes: Number(value)}})} />} />
 				</SettingsCard>
 				<p class="plugin-security-note"><ShieldCheck size={14} />第三方插件是已安装的可信组件。EchoCode 提供进程树终止、资源上限、权限声明和路径校验，但当前 Windows 沙箱不承诺完整的文件系统或网络隔离。</p>
-				<RuntimeSaveActions dirty={props.runtimeDirty} reset={props.resetRuntimeDraft} save={props.saveRuntime} saving={props.savingRuntime} />
+
 			</SettingsSection>
-		</div>
+		</SettingsWorkspace>
 	);
 }
 
@@ -3213,9 +2571,9 @@ export function McpSettingsPanel(props: {
   };
 
   return (
-    <div class="settings-page-body mcp-settings-page">
+    <SettingsWorkspace class="mcp-settings-page">
       <SettingsSection
-        class="mcp-server-list-section"
+        class="mcp-server-list-section settings-workspace-sidebar"
         title="MCP 服务器"
         action={
           <div class="settings-row-actions">
@@ -3254,7 +2612,7 @@ export function McpSettingsPanel(props: {
         </div>
       </SettingsSection>
 
-      <SettingsSection class="mcp-server-editor-section" title="连接配置">
+      <SettingsSection class="mcp-server-editor-section settings-workspace-main" title="连接配置">
         <Show when={activeServer()} fallback={<p class="settings-empty-box">添加服务器后在这里配置连接</p>}>
           {(server) => (
             <div class="mcp-server-editor">
@@ -3269,7 +2627,7 @@ export function McpSettingsPanel(props: {
                     label={mcpStatusLabel(activeStatus()?.state)}
                     tone={mcpStatusTone(activeStatus()?.state)}
                   />
-                  <SwitchControl checked={server().enabled} onChange={(value) => updateServer(server().id, { enabled: value })} />
+                  <SwitchControl label={`启用 ${server().name || server().id}`} checked={server().enabled} onChange={(value) => updateServer(server().id, { enabled: value })} />
                   <IconButton
                     title="保存配置并重新连接"
                     disabled={props.refreshingMCPID === server().id}
@@ -3299,6 +2657,7 @@ export function McpSettingsPanel(props: {
                   control={
                     <input
                       class="settings-input row-control"
+                      aria-label="服务器名称"
                       value={server().name}
                       onInput={(event) => updateServer(server().id, { name: event.currentTarget.value })}
                     />
@@ -3308,16 +2667,13 @@ export function McpSettingsPanel(props: {
                   title="连接方式"
                   description="本地进程使用 stdio，远程服务优先使用 Streamable HTTP"
                   control={
-                    <select
-                      class="settings-select"
+                    <SelectControl
+                      ariaLabel="连接方式"
                       value={server().transport}
                       disabled={server().transport === "builtin"}
-                      onChange={(event) => changeTransport(server(), event.currentTarget.value)}
-                    >
-                      <For each={mcpTransportOptions}>
-                        {(option) => <option value={option.value}>{option.label}</option>}
-                      </For>
-                    </select>
+                      options={mcpTransportOptions}
+                      onChange={(value) => changeTransport(server(), value)}
+                    />
                   }
                 />
 
@@ -3328,6 +2684,7 @@ export function McpSettingsPanel(props: {
                     control={
                       <input
                         class="settings-input row-control"
+                        aria-label="启动命令"
                         value={server().command}
                         spellcheck={false}
                         placeholder="npx"
@@ -3443,15 +2800,10 @@ export function McpSettingsPanel(props: {
             </div>
           )}
         </Show>
-        <RuntimeSaveActions
-          dirty={props.runtimeDirty}
-          reset={props.resetRuntimeDraft}
-          save={props.saveRuntime}
-          saving={props.savingRuntime}
-        />
+
       </SettingsSection>
 
-      <SettingsSection class="mcp-snapshot-section" title="工具快照">
+      <SettingsSection class="mcp-snapshot-section settings-workspace-secondary" title="工具快照">
         <div class="item-list">
           <For each={props.snapshots} fallback={<p class="settings-empty-box">连接服务器后会在这里记录稳定 schema 快照</p>}>
             {(snapshot) => (
@@ -3464,7 +2816,7 @@ export function McpSettingsPanel(props: {
           </For>
         </div>
       </SettingsSection>
-    </div>
+    </SettingsWorkspace>
   );
 }
 
@@ -3553,11 +2905,11 @@ export function BrowserSettingsPanel(props: {
         </SettingsCard>
       </SettingsSection>
 
-      <SettingsSection title="General">
+      <SettingsSection title="常规">
         <SettingsCard>
           <SettingsRow
-            title="Default local URL open destination"
-            description="Where localhost and loopback URLs open by default"
+            title="本地链接打开方式"
+            description="选择本地开发页面默认使用的浏览器"
             control={
               <SelectControl
                 value={props.runtimeDraft.browser.defaultLocalUrlDestination}
@@ -3610,7 +2962,7 @@ export function BrowserSettingsPanel(props: {
         </SettingsCard>
       </SettingsSection>
 
-      <SettingsSection title="Autofill and passwords">
+      <SettingsSection title="自动填充与密码">
         <SettingsCard>
           <SettingsRow
             title="密码管理器"
@@ -3778,12 +3130,7 @@ export function BrowserSettingsPanel(props: {
             control={<SwitchControl checked={props.runtimeDraft.browser.developerCdpAccess} onChange={(value) => updateBrowser({ developerCdpAccess: value })} />}
           />
         </div>
-        <RuntimeSaveActions
-          dirty={props.runtimeDirty}
-          reset={props.resetRuntimeDraft}
-          save={props.saveRuntime}
-          saving={props.savingRuntime}
-        />
+
       </SettingsSection>
     </div>
   );
@@ -3909,46 +3256,8 @@ export function ComputerControlSettingsPanel(props: {
             }
           />
         </SettingsCard>
-        <RuntimeSaveActions
-          dirty={props.runtimeDirty}
-          reset={props.resetRuntimeDraft}
-          save={props.saveRuntime}
-          saving={props.savingRuntime}
-        />
-      </SettingsSection>
-    </div>
-  );
-}
 
-export function CommandSettingsPanel(props: {
-  runtimeDraft: RuntimeSettings;
-  skills: WorkbenchState["skillsIndex"];
-  snapshots: WorkbenchState["mcpSnapshots"];
-}) {
-  return (
-    <div class="settings-page-body">
-      <PanelSection icon={<Command size={16} />} title="命令">
-        <MetricGrid
-          items={[
-            ["Shell", props.runtimeDraft.shellAccess ? "允许" : "关闭"],
-            ["网络", props.runtimeDraft.networkAccess ? "允许" : "关闭"],
-            ["工具超时", `${props.runtimeDraft.toolTimeoutSeconds}s`],
-            ["任务空闲", `${props.runtimeDraft.taskIdleTimeoutSeconds}s`],
-            ["命令超时", `${props.runtimeDraft.maxCommandSeconds}s`],
-            ["内存上限", `${props.runtimeDraft.maxCommandMemoryMb} MB`],
-            ["进程上限", `${props.runtimeDraft.maxCommandProcesses}`],
-            ["审批", runtimeLabel(approvalOptions, props.runtimeDraft.approvalPolicy)],
-          ]}
-        />
-      </PanelSection>
-      <PanelSection icon={<FileText size={16} />} title="执行链路">
-        <div class="route-stack">
-          <RouteStep icon={<Bot size={15} />} title="DeepSeek official" detail="primary route" />
-          <RouteStep icon={<Sparkles size={15} />} title="Skills index" detail={`${formatInteger(props.skills.length)} loaded`} />
-          <RouteStep icon={<Network size={15} />} title="MCP schema" detail={`${formatInteger(props.snapshots.length)} snapshot`} />
-          <RouteStep icon={<FileText size={15} />} title="Summary-first results" detail="raw output stays local" />
-        </div>
-      </PanelSection>
+      </SettingsSection>
     </div>
   );
 }
@@ -4010,12 +3319,7 @@ export function MemorySettingsPanel(props: {
             control={<SwitchControl checked={props.runtimeDraft.memory.includeArchived} onChange={(value) => updateMemory({ includeArchived: value })} />}
           />
         </SettingsCard>
-        <RuntimeSaveActions
-          dirty={props.runtimeDirty}
-          reset={props.resetRuntimeDraft}
-          save={props.saveRuntime}
-          saving={props.savingRuntime}
-        />
+
       </SettingsSection>
 
       <SettingsSection title="当前快照">
@@ -4033,42 +3337,22 @@ export function MemorySettingsPanel(props: {
   );
 }
 
-export function ProfileSettingsPanel(props: {
-  deepSeek: WorkbenchState["deepSeek"];
-  profile: WorkbenchState["reasoning"];
-  runtimeDraft: RuntimeSettings;
-  themeMode: ThemeMode;
-}) {
-  return (
-    <div class="settings-page-body">
-      <PanelSection icon={<User size={16} />} title="个性化">
-        <MetricGrid
-          items={[
-            ["账户", "本地用户"],
-            ["主题", props.themeMode === "dark" ? "暗色" : "浅色"],
-            ["推理", props.profile.label],
-            ["连接", props.deepSeek.configured ? statusLabel(props.deepSeek.lastCheckStatus) : "未连接"],
-            ["工作区", compactPath(props.runtimeDraft.workspaceRoot)],
-            ["缓存目标", `${props.runtimeDraft.cacheTargetPercent.toFixed(1)}%`],
-          ]}
-        />
-      </PanelSection>
-    </div>
-  );
-}
-
 export function ShortcutSettingsPanel() {
   return (
     <div class="settings-page-body">
       <PanelSection icon={<Keyboard size={16} />} title="键盘快捷键">
         <div class="item-list">
           <div class="shortcut-row">
-            <span>新建任务</span>
+            <span>新对话</span>
             <kbd>Ctrl+N</kbd>
           </div>
           <div class="shortcut-row">
             <span>搜索</span>
             <kbd>Ctrl+K</kbd>
+          </div>
+          <div class="shortcut-row">
+            <span>展开 / 收起侧栏</span>
+            <kbd>Ctrl+B</kbd>
           </div>
           <div class="shortcut-row">
             <span>发送消息</span>
@@ -4090,6 +3374,8 @@ export function AutomationSettingsPanel(props: {
   runtimeDraft: RuntimeSettings;
 }) {
   const [automation, setAutomation] = createSignal<AutomationState>({ tasks: [], running: false });
+  const [loadingTasks, setLoadingTasks] = createSignal(true);
+  const [loadFailed, setLoadFailed] = createSignal(false);
   const [draft, setDraft] = createSignal<AutomationTask>(createAutomationDraft(props.projectTree));
   const [draftDirty, setDraftDirty] = createSignal(false);
   const [busy, setBusy] = createSignal<"save" | "delete" | "run" | "stop" | "toggle" | "">("");
@@ -4098,10 +3384,13 @@ export function AutomationSettingsPanel(props: {
 
   const applyState = (state: AutomationState, preferredID = draft().id, replaceDraft = true) => {
     setAutomation(state);
+    setLoadFailed(false);
     const selected = state.tasks.find((task) => task.id === preferredID);
     if (selected && replaceDraft) {
       setDraft(cloneAutomationTask(selected));
       setDraftDirty(false);
+    } else if (selected) {
+      setDraft(current => ({ ...current, lastRun: selected.lastRun, runCount: selected.runCount, failureCount: selected.failureCount, nextRunAt: selected.nextRunAt }));
     }
   };
 
@@ -4114,14 +3403,18 @@ export function AutomationSettingsPanel(props: {
     unsubscribeAutomation = onAutomationState((state) => applyState(state, draft().id, !draftDirty()));
     void getAutomationState()
       .then((state) => applyState(state, state.tasks[0]?.id ?? ""))
-      .catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));
+      .catch((cause) => { setLoadFailed(true); setError(cause instanceof Error ? cause.message : String(cause)); })
+      .finally(() => setLoadingTasks(false));
   });
   onCleanup(() => unsubscribeAutomation());
 
   const selectedProject = createMemo(() => props.projectTree.find((project) => project.id === draft().projectId));
   const availableSessions = createMemo(() => selectedProject()?.sessions.filter((session) => !session.archived || session.id === draft().sessionId) ?? []);
   const selectedProvider = createMemo(() => props.runtimeDraft.model.providers.find((provider) => provider.id === draft().providerId));
-  const selectedTaskRunning = createMemo(() => draft().lastRun?.status === "running" || draft().lastRun?.status === "starting");
+  const selectedTaskRunning = createMemo(() => {
+    const status = automation().tasks.find(task => task.id === draft().id)?.lastRun?.status;
+    return status === "running" || status === "starting";
+  });
 
   createEffect(() => {
     if (!draft().projectId && props.projectTree.length > 0) {
@@ -4217,14 +3510,14 @@ export function AutomationSettingsPanel(props: {
   };
 
   return (
-    <div class="settings-page-body automation-settings-page">
-      <section class="automation-task-list-section settings-form-section">
+    <SettingsWorkspace class="automation-settings-page">
+      <section class="automation-task-list-section settings-form-section settings-workspace-sidebar">
         <div class="settings-form-title">
           <h2>任务</h2>
           <button class="settings-square-button" type="button" title="新建自动化任务" onClick={createNew}><Plus size={15} /></button>
         </div>
         <div class="automation-task-list">
-          <For each={automation().tasks} fallback={<p class="settings-empty-box">还没有自动化任务</p>}>
+          <For each={automation().tasks} fallback={<p class="settings-empty-box">{loadingTasks() ? "正在加载任务…" : loadFailed() || automation().error ? "任务列表暂不可用" : "还没有自动化任务"}</p>}>
             {(task) => (
               <div class="automation-task-option" classList={{ active: draft().id === task.id }}>
                 <button type="button" onClick={() => { setDraft(cloneAutomationTask(task)); setDraftDirty(false); }}>
@@ -4241,7 +3534,8 @@ export function AutomationSettingsPanel(props: {
         </div>
       </section>
 
-      <section class="automation-task-editor-section settings-form-section">
+      <section class="automation-task-editor-section settings-form-section settings-workspace-main">
+        <Show when={error() || automation().error}><InlineNotice class="automation-error" message={error() || automation().error || ""} /></Show>
         <div class="settings-form-title">
           <h2>{draft().id ? "编辑任务" : "新建任务"}</h2>
           <Show when={draft().id}>
@@ -4268,10 +3562,7 @@ export function AutomationSettingsPanel(props: {
               title="计划类型"
               description={draft().schedule.kind === "daily" ? "按本机时区每天执行" : "从保存或上次运行时间开始计算"}
               control={
-                <div class="settings-mini-segment">
-                  <button type="button" classList={{ active: draft().schedule.kind === "interval" }} onClick={() => editDraft((current) => ({ ...current, schedule: { ...current.schedule, kind: "interval" } }))}>按间隔</button>
-                  <button type="button" classList={{ active: draft().schedule.kind === "daily" }} onClick={() => editDraft((current) => ({ ...current, schedule: { ...current.schedule, kind: "daily" } }))}>每天</button>
-                </div>
+                <SegmentedControl value={draft().schedule.kind} options={[{ value: "interval", label: "按间隔" }, { value: "daily", label: "每天" }]} onChange={kind => editDraft(current => ({ ...current, schedule: { ...current.schedule, kind: kind as "interval" | "daily" } }))} />
               }
             />
             <Show when={draft().schedule.kind === "daily"} fallback={
@@ -4296,37 +3587,29 @@ export function AutomationSettingsPanel(props: {
               title="项目"
               description={selectedProject()?.workspaceRoot || "选择 Agent 工作目录"}
               control={
-                <select class="settings-select" value={draft().projectId} onChange={(event) => {
-                  const project = props.projectTree.find((candidate) => candidate.id === event.currentTarget.value);
+                <SelectControl value={draft().projectId} options={props.projectTree.map(project => ({ value: project.id, label: project.name }))} onChange={(value) => {
+                  const project = props.projectTree.find((candidate) => candidate.id === value);
                   const session = project?.sessions.find((candidate) => !candidate.archived) ?? project?.sessions[0];
                   editDraft((current) => ({ ...current, projectId: project?.id ?? "", sessionId: session?.id ?? "" }));
-                }}>
-                  <For each={props.projectTree}>{(project) => <option value={project.id}>{project.name}</option>}</For>
-                </select>
+                }} />
               }
             />
             <SettingsRow
               title="会话"
               description="运行结果会作为一轮新消息写入该会话"
               control={
-                <select class="settings-select" value={draft().sessionId} onChange={(event) => editDraft((current) => ({ ...current, sessionId: event.currentTarget.value }))}>
-                  <For each={availableSessions()}>{(session) => <option value={session.id}>{session.title}{session.archived ? "（已归档）" : ""}</option>}</For>
-                </select>
+                <SelectControl value={draft().sessionId} options={availableSessions().map(session => ({ value: session.id, label: session.title + (session.archived ? "（已归档）" : "") }))} onChange={value => editDraft(current => ({ ...current, sessionId: value }))} />
               }
             />
             <SettingsRow
               title="模型路由"
               description="默认跟随模型设置；也可为此任务固定供应商"
               control={
-                <select class="settings-select" value={draft().providerId ?? ""} onChange={(event) => {
-                  const providerID = event.currentTarget.value;
+                <SelectControl value={draft().providerId ?? ""} options={[{ value: "", label: "跟随当前模型" }, ...props.runtimeDraft.model.providers.filter(provider => provider.enabled).map(provider => ({ value: provider.id, label: provider.name }))]} onChange={(providerID) => {
                   const provider = props.runtimeDraft.model.providers.find((candidate) => candidate.id === providerID);
                   const modelID = provider ? modelOptionsForProvider(provider)[0]?.id ?? provider.defaultModelId : "";
                   editDraft((current) => ({ ...current, providerId: providerID, modelId: modelID }));
-                }}>
-                  <option value="">跟随当前模型</option>
-                  <For each={props.runtimeDraft.model.providers.filter((provider) => provider.enabled)}>{(provider) => <option value={provider.id}>{provider.name}</option>}</For>
-                </select>
+                }} />
               }
             />
             <Show when={selectedProvider()}>
@@ -4335,9 +3618,7 @@ export function AutomationSettingsPanel(props: {
                   title="固定模型"
                   description="仅影响该自动化任务"
                   control={
-                    <select class="settings-select" value={draft().modelId ?? ""} onChange={(event) => editDraft((current) => ({ ...current, modelId: event.currentTarget.value }))}>
-                      <For each={modelOptionsForProvider(provider())}>{(model) => <option value={model.id}>{model.displayName || model.id}</option>}</For>
-                    </select>
+                    <SelectControl value={draft().modelId ?? ""} options={modelOptionsForProvider(provider()).map(model => ({ value: model.id, label: model.displayName || model.id }))} onChange={value => editDraft(current => ({ ...current, modelId: value }))} />
                   }
                 />
               )}
@@ -4365,7 +3646,6 @@ export function AutomationSettingsPanel(props: {
             </div>
           )}
         </Show>
-        <Show when={error()}><p class="about-action-error automation-error"><AlertTriangle size={14} />{error()}</p></Show>
 
         <div class="settings-actions automation-actions">
           <Show when={draft().id}>
@@ -4376,10 +3656,10 @@ export function AutomationSettingsPanel(props: {
               <button class="settings-danger-button" type="button" disabled={busy() !== ""} onClick={() => void stop()}><Square size={13} />{busy() === "stop" ? "停止中" : "停止运行"}</button>
             </Show>
           </Show>
-          <button class="settings-soft-button primary" type="button" disabled={busy() !== "" || props.projectTree.length === 0 || Boolean(draft().id && !draftDirty())} onClick={() => void save()}><Save size={14} />{busy() === "save" ? "保存中" : "保存任务"}</button>
+          <button class="settings-soft-button primary" type="button" disabled={loadingTasks() || busy() !== "" || selectedTaskRunning() || props.projectTree.length === 0 || Boolean(draft().id && !draftDirty())} onClick={() => void save()}><Save size={14} />{busy() === "save" ? "保存中" : "保存任务"}</button>
         </div>
       </section>
-    </div>
+    </SettingsWorkspace>
   );
 }
 
@@ -4484,7 +3764,7 @@ export function AboutSettingsPanel(props: {
   return (
     <div class="settings-page-body about-settings-page">
       <section class="about-product" aria-label="EchoCode 版本信息">
-        <div class="about-product-mark" aria-hidden="true"><Command size={24} /></div>
+        <div class="about-product-mark" role="img" aria-label="EchoCode 标志"><BrandMark size={30} /></div>
         <div class="about-product-copy">
           <h2>{info()?.name ?? "EchoCode"}</h2>
           <p>面向真实项目工作的 AI 编码 Agent</p>
@@ -4576,7 +3856,7 @@ export function AboutSettingsPanel(props: {
             control={<SwitchControl checked={props.runtimeDraft.update.autoDownload} onChange={(checked) => updateSettings({ autoDownload: checked })} />}
           />
         </SettingsCard>
-        <RuntimeSaveActions dirty={props.runtimeDirty} reset={props.resetRuntimeDraft} save={props.saveRuntime} saving={props.savingRuntime} />
+
       </SettingsSection>
 
       <SettingsSection title="运行信息">
@@ -4652,16 +3932,6 @@ function formatAboutDate(value?: string) {
   return date.toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
-export function ArchiveSettingsPanel() {
-  return (
-    <div class="settings-page-body">
-      <PanelSection icon={<Archive size={16} />} title="已归档对话">
-        <p class="empty-line">暂无已归档对话</p>
-      </PanelSection>
-    </div>
-  );
-}
-
 export function RuntimeSaveActions(props: {
   dirty: boolean;
   reset: () => void;
@@ -4669,314 +3939,19 @@ export function RuntimeSaveActions(props: {
   saving: boolean;
 }) {
   return (
-    <div class="settings-actions">
-      <button type="button" onClick={props.reset} disabled={!props.dirty || props.saving}>
-        重置
-      </button>
-      <button class="primary" type="button" onClick={props.save} disabled={!props.dirty || props.saving}>
-        {props.saving ? "保存中" : "保存设置"}
-      </button>
+    <div class="settings-actions settings-save-bar">
+      <Show when={props.dirty}><span class="settings-save-state" role="status">尚未保存的更改</span></Show>
+      <SettingsButton onClick={props.reset} disabled={!props.dirty || props.saving}>还原更改</SettingsButton>
+      <SettingsButton variant="primary" icon={<Save size={14} />} onClick={props.save} disabled={!props.dirty} loading={props.saving}>保存设置</SettingsButton>
     </div>
   );
 }
 
-export function ModelRouteMenu(props: {
-  onManage: () => void;
-  onSelect: (providerID: string, modelID: string) => void;
-  saving: boolean;
-  settings: RuntimeSettings;
-}) {
-  const [open, setOpen] = createSignal(false);
-  const [activeProviderID, setActiveProviderID] = createSignal("");
-  const [compactMenu, setCompactMenu] = createSignal(false);
-  const [menuPopoverLeft, setMenuPopoverLeft] = createSignal(0);
-  const [compactMenuWidth, setCompactMenuWidth] = createSignal(430);
-  const [submenuSide, setSubmenuSide] = createSignal<"left" | "right">("right");
-  const [submenuWidth, setSubmenuWidth] = createSignal(230);
-  let menuRef: HTMLDivElement | undefined;
-  let triggerRef: HTMLButtonElement | undefined;
-
-  const selectedProvider = createMemo(() => selectedModelProvider(props.settings));
-  const selectedModel = createMemo(() => selectedModelName(props.settings));
-  const providers = createMemo(() => {
-    const withModels = props.settings.model.providers.filter((provider) => modelOptionsForProvider(provider).length > 0);
-    const enabled = withModels.filter((provider) => provider.enabled);
-    return enabled.length > 0 ? enabled : withModels;
-  });
-  const activeProvider = createMemo(() => {
-    const available = providers();
-    return (
-      available.find((provider) => provider.id === activeProviderID()) ??
-      available.find((provider) => provider.id === selectedProvider()?.id) ??
-      available[0]
-    );
-  });
-  const selectedModelSetting = createMemo(() => {
-    const provider = selectedProvider();
-    return provider ? modelOptionsForProvider(provider).find((model) => model.id === selectedModel()) : undefined;
-  });
-  const currentLabel = createMemo(() => {
-    const provider = selectedProvider();
-    if (!provider) {
-      return "选择模型";
-    }
-    const model = selectedModelSetting();
-    return model?.displayName || shortModelName(selectedModel()) || provider.name;
-  });
-  const updateMenuLayout = () => {
-    if (!menuRef) {
-      return;
-    }
-    const pane = menuRef.closest(".chat-pane") as HTMLElement | null;
-    const paneRect = pane?.getBoundingClientRect() ?? {
-      left: 0,
-      right: window.innerWidth,
-      width: window.innerWidth,
-    };
-    const margin = 14;
-    const gap = 6;
-    const popoverWidth = 192;
-    const preferredSubmenuWidth = 230;
-    const minimumSubmenuWidth = 170;
-    const menuRect = menuRef.getBoundingClientRect();
-    const minPopoverLeft = paneRect.left + margin;
-    const maxPopoverLeft = Math.max(minPopoverLeft, paneRect.right - margin - popoverWidth);
-    const popoverLeft = Math.min(Math.max(menuRect.left, minPopoverLeft), maxPopoverLeft);
-    const leftSpace = Math.max(0, popoverLeft - gap - minPopoverLeft);
-    const rightSpace = Math.max(
-      0,
-      paneRect.right - margin - (popoverLeft + popoverWidth + gap),
-    );
-
-    let side: "left" | "right";
-    if (rightSpace >= preferredSubmenuWidth) {
-      side = "right";
-    } else if (leftSpace >= preferredSubmenuWidth) {
-      side = "left";
-    } else {
-      side = rightSpace >= leftSpace ? "right" : "left";
-    }
-    const availableSubmenuWidth = side === "right" ? rightSpace : leftSpace;
-    if (availableSubmenuWidth >= minimumSubmenuWidth) {
-      setCompactMenu(false);
-      setMenuPopoverLeft(Math.round(popoverLeft - menuRect.left));
-      setSubmenuSide(side);
-      setSubmenuWidth(Math.floor(Math.min(preferredSubmenuWidth, availableSubmenuWidth)));
-      return;
-    }
-
-    setCompactMenu(true);
-    setSubmenuSide("right");
-    const width = Math.min(430, Math.max(180, paneRect.width - margin * 2));
-    const minLeft = paneRect.left + margin;
-    const maxLeft = Math.max(minLeft, paneRect.right - margin - width);
-    const viewportLeft = Math.min(Math.max(menuRect.left, minLeft), maxLeft);
-    setCompactMenuWidth(Math.floor(width));
-    setMenuPopoverLeft(Math.round(viewportLeft - menuRect.left));
-  };
-
-  const close = () => {
-    setOpen(false);
-  };
-  const toggle = () => {
-    const next = !open();
-    setOpen(next);
-    if (next) {
-      const available = providers();
-      const initial = available.find((provider) => provider.id === selectedProvider()?.id) ?? available[0];
-      setActiveProviderID(initial?.id ?? "");
-      queueMicrotask(updateMenuLayout);
-    }
-  };
-  const selectModel = (providerID: string, modelID: string) => {
-    close();
-    props.onSelect(providerID, modelID);
-  };
-  const focusProvider = (current: HTMLButtonElement, offset: number) => {
-    const options = Array.from(menuRef?.querySelectorAll<HTMLButtonElement>(".model-provider-option") ?? []);
-    if (options.length === 0) {
-      return;
-    }
-    const currentIndex = options.indexOf(current);
-    const nextIndex = (Math.max(currentIndex, 0) + offset + options.length) % options.length;
-    const next = options[nextIndex];
-    setActiveProviderID(next.dataset.providerId ?? "");
-    next.focus();
-  };
-  const focusModel = (current: HTMLButtonElement, offset: number) => {
-    const options = Array.from(
-      current.closest(".model-route-submenu")?.querySelectorAll<HTMLButtonElement>(".model-option") ?? [],
-    );
-    if (options.length === 0) {
-      return;
-    }
-    const currentIndex = options.indexOf(current);
-    options[(Math.max(currentIndex, 0) + offset + options.length) % options.length].focus();
-  };
-  const focusActiveProvider = () => {
-    const providerID = activeProvider()?.id;
-    const option = Array.from(menuRef?.querySelectorAll<HTMLButtonElement>(".model-provider-option") ?? [])
-      .find((item) => item.dataset.providerId === providerID);
-    option?.focus();
-  };
-
-  onMount(() => {
-    const pane = menuRef?.closest(".chat-pane");
-    const resizeObserver = new ResizeObserver(updateMenuLayout);
-    if (pane) {
-      resizeObserver.observe(pane);
-    }
-    updateMenuLayout();
-    const handlePointerDown = (event: PointerEvent) => {
-      if (!open()) {
-        return;
-      }
-      const target = event.target;
-      if (target instanceof Node && menuRef?.contains(target)) {
-        return;
-      }
-      close();
-    };
-    window.addEventListener("pointerdown", handlePointerDown);
-    window.addEventListener("resize", updateMenuLayout);
-    onCleanup(() => {
-      resizeObserver.disconnect();
-      window.removeEventListener("pointerdown", handlePointerDown);
-      window.removeEventListener("resize", updateMenuLayout);
-    });
-  });
-
-  return (
-    <div
-      class="model-route-menu"
-      classList={{ compact: compactMenu(), "submenu-left": submenuSide() === "left" }}
-      ref={menuRef}
-      style={`--model-menu-popover-left: ${menuPopoverLeft()}px; --model-menu-compact-width: ${compactMenuWidth()}px; --model-menu-submenu-width: ${submenuWidth()}px;`}
-    >
-      <button
-        ref={triggerRef}
-        class="model-route-trigger"
-        type="button"
-        aria-haspopup="menu"
-        aria-expanded={open()}
-        title="选择模型"
-        disabled={props.saving}
-        onClick={toggle}
-      >
-        <Cpu size={15} />
-        <span class="model-route-current">{currentLabel()}</span>
-        <ChevronDown size={14} aria-hidden="true" />
-      </button>
-      <Show when={open()}>
-        <div class="model-route-popover" aria-label="选择模型">
-          <div class="model-provider-column" role="menu" aria-label="模型供应商">
-            <For each={providers()} fallback={<p class="model-list-empty">还没有可用的模型。</p>}>
-              {(provider) => {
-                const active = () => activeProvider()?.id === provider.id;
-                const selected = () => selectedProvider()?.id === provider.id;
-                return (
-                  <button
-                    class="model-provider-option"
-                    classList={{ active: active() }}
-                    type="button"
-                    role="menuitem"
-                    aria-haspopup="menu"
-                    aria-expanded={active()}
-                    data-provider-id={provider.id}
-                    onFocus={() => setActiveProviderID(provider.id)}
-                    onPointerEnter={() => setActiveProviderID(provider.id)}
-                    onClick={() => setActiveProviderID(provider.id)}
-                    onKeyDown={(event) => {
-                      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-                        event.preventDefault();
-                        focusProvider(event.currentTarget, event.key === "ArrowDown" ? 1 : -1);
-                      } else if (
-                        event.key === (compactMenu() || submenuSide() === "right" ? "ArrowRight" : "ArrowLeft")
-                      ) {
-                        event.preventDefault();
-                        menuRef?.querySelector<HTMLButtonElement>(".model-route-submenu .model-option")?.focus();
-                      } else if (event.key === "Escape") {
-                        close();
-                        triggerRef?.focus();
-                      }
-                    }}
-                  >
-                    <span class="model-provider-name">{provider.name}</span>
-                    <span class="model-provider-indicators">
-                      <Show when={selected()}><Check size={14} aria-label="当前供应商" /></Show>
-                      <Show
-                        when={!compactMenu() && submenuSide() === "left"}
-                        fallback={<ChevronRight size={14} aria-hidden="true" />}
-                      >
-                        <ChevronLeft size={14} aria-hidden="true" />
-                      </Show>
-                    </span>
-                  </button>
-                );
-              }}
-            </For>
-          </div>
-          <Show when={activeProvider()} keyed>
-            {(provider) => (
-              <div class="model-route-submenu">
-                <div class="model-list-scroll" role="menu" aria-label={`${provider.name} 模型`}>
-                  <For each={modelOptionsForProvider(provider)} fallback={<p class="model-list-empty">没有可用模型。</p>}>
-                    {(model) => {
-                      const selected = () => selectedProvider()?.id === provider.id && selectedModel() === model.id;
-                      return (
-                        <button
-                          class="model-option"
-                          classList={{ selected: selected() }}
-                          type="button"
-                          role="menuitemradio"
-                          aria-checked={selected()}
-                          title={model.displayName || model.id}
-                          onClick={() => selectModel(provider.id, model.id)}
-                          onKeyDown={(event) => {
-                            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-                              event.preventDefault();
-                              focusModel(event.currentTarget, event.key === "ArrowDown" ? 1 : -1);
-                            } else if (
-                              event.key === (compactMenu() || submenuSide() === "right" ? "ArrowLeft" : "ArrowRight")
-                            ) {
-                              event.preventDefault();
-                              focusActiveProvider();
-                            } else if (event.key === "Escape") {
-                              close();
-                              triggerRef?.focus();
-                            }
-                          }}
-                        >
-                          <span>{model.displayName || model.id}</span>
-                          <Show when={selected()}><Check size={14} aria-label="已选中" /></Show>
-                        </button>
-                      );
-                    }}
-                  </For>
-                </div>
-              </div>
-            )}
-          </Show>
-          <button
-            class="model-manage-button"
-            type="button"
-            onClick={() => {
-              close();
-              props.onManage();
-            }}
-          >
-            <SlidersHorizontal size={14} />
-            管理模型
-          </button>
-        </div>
-      </Show>
-    </div>
-  );
-}
+export { ModelRouteMenu } from "./components/ModelRouteMenu";
 
 export function SettingsSection(props: { action?: JSX.Element; children: JSX.Element; class?: string; title?: string }) {
   return (
-    <section class={`settings-form-section ${props.class ?? ""}`}>
+    <section class={`settings-form-section ${props.class ?? ""}`} aria-label={props.title}>
       <Show when={props.title || props.action}>
         <div class="settings-form-title">
           <Show when={props.title}>
@@ -5004,6 +3979,7 @@ export function SettingsRow(props: {
   title: string;
 }) {
   return (
+    <SettingsControlLabel.Provider value={props.title}>
     <div class="settings-row" classList={{ danger: props.danger, "has-icon": Boolean(props.icon) }}>
       <Show when={props.icon}>
         <div class="settings-row-icon">{props.icon}</div>
@@ -5018,19 +3994,10 @@ export function SettingsRow(props: {
         <div class="settings-row-control">{props.control}</div>
       </Show>
     </div>
+    </SettingsControlLabel.Provider>
   );
 }
 
-export function SwitchControl(props: { checked: boolean; label?: string; onChange: (checked: boolean) => void }) {
-  return (
-    <label class="settings-switch">
-      <input aria-label={props.label} type="checkbox" checked={props.checked} onChange={(event) => props.onChange(event.currentTarget.checked)} />
-      <span aria-hidden="true">
-        <span />
-      </span>
-    </label>
-  );
-}
 
 function localBillingDateValue(date: Date) {
   const year = date.getFullYear();
@@ -5099,6 +4066,17 @@ export function CachePanel(props: {
   reconcileUsageBilling: (input: UsageBillingReconciliationInput) => Promise<void> | void;
 }) {
   const dates = defaultBillingDates();
+  const [view, setView] = createSignal("overview");
+  const [billingBusy, setBillingBusy] = createSignal(false);
+  const [billingError, setBillingError] = createSignal("");
+  const performBilling = async (action: () => Promise<void> | void) => {
+    if (billingBusy()) return;
+    setBillingBusy(true);
+    setBillingError("");
+    try { await action(); }
+    catch (error) { setBillingError(error instanceof Error ? error.message : String(error)); }
+    finally { setBillingBusy(false); }
+  };
   const [providerID, setProviderID] = createSignal(props.selectedProviderID || props.providers[0]?.id || "");
   const [periodStart, setPeriodStart] = createSignal(dates.start);
   const [periodEnd, setPeriodEnd] = createSignal(dates.end);
@@ -5109,7 +4087,7 @@ export function CachePanel(props: {
   const validPeriod = createMemo(() => billingPeriodInput(providerID(), periodStart(), periodEnd()));
   const totalTokens = createMemo(() => (props.usageLedger?.totalInputTokens ?? 0) + (props.usageLedger?.totalOutputTokens ?? 0));
   const sessionTokens = createMemo(() => (props.usageLedger?.sessionInputTokens ?? 0) + (props.usageLedger?.sessionOutputTokens ?? 0));
-  const cacheRate = createMemo(() => props.hasCacheTokens ? Math.max(0, Math.min(1, props.cacheHitRate)) : 0);
+  const cacheRate = createMemo(() => props.sessionHasCacheTokens ? Math.max(0, Math.min(1, props.session.sessionCacheHitRate)) : 0);
   const officialTokens = createMemo(() => {
     const current = report();
     return (current?.officialInputTokens ?? 0) + (current?.officialOutputTokens ?? 0);
@@ -5118,7 +4096,7 @@ export function CachePanel(props: {
     const value = props.usageLedger?.lastRecordedAt;
     if (!value) return "暂无本地请求记录";
     const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? "本地账本已启用" : `最近写入 ${date.toLocaleString()}`;
+    return Number.isNaN(date.getTime()) ? "本地账本已启用" : `最近写入 ${date.toLocaleString("zh-CN", { hour12: false })}`;
   });
 
   createEffect(() => {
@@ -5142,152 +4120,87 @@ export function CachePanel(props: {
   const syncOfficialBill = () => {
     const input = validPeriod();
     if (!input || report()?.providerKind !== "openai") return;
-    void props.syncUsageBilling(input);
+    void performBilling(() => props.syncUsageBilling(input));
   };
 
   const saveManualBill = () => {
     const input = validPeriod();
     const officialCost = Number(manualCost());
-    if (!input || !Number.isFinite(officialCost) || officialCost < 0) return;
-    void props.reconcileUsageBilling({
+    if (!input || !manualCost().trim() || !Number.isFinite(officialCost) || officialCost < 0) return;
+    void performBilling(() => props.reconcileUsageBilling({
       ...input,
       officialCost,
       source: "用户录入官方账单",
       note: manualNote().trim(),
-    });
+    }));
   };
 
   return (
-    <div class="settings-page-body usage-dashboard">
-      <section class="usage-dashboard-hero">
-        <div class="usage-dashboard-title">
-          <span>本机账本</span>
-          <h2>使用统计</h2>
-          <p>查看真实请求、Token、缓存效率与账单对账。数据只保存在本机；官方账单仅在你主动同步时读取。</p>
-        </div>
-        <div class="usage-dashboard-meta">
-          <span>当前统计供应商</span>
-          <strong>{activeProvider()?.name || "未选择供应商"}</strong>
-          <span>{usageLastRecordedAt()}</span>
-        </div>
-      </section>
-
-      <section class="usage-dashboard-summary" aria-label="用量概览">
-        <div class="usage-dashboard-metric">
-          <span>累计成本</span>
-          <strong>{formatCost(props.usageLedger?.totalEffectiveCost ?? 0)}</strong>
-          <small>本地费率估算</small>
-        </div>
-        <div class="usage-dashboard-metric">
-          <span>累计 Token</span>
-          <strong>{formatInteger(totalTokens())}</strong>
-          <small>输入 {formatInteger(props.usageLedger?.totalInputTokens ?? 0)} · 输出 {formatInteger(props.usageLedger?.totalOutputTokens ?? 0)}</small>
-        </div>
-        <div class="usage-dashboard-metric">
-          <span>累计请求</span>
-          <strong>{formatInteger(props.usageLedger?.totalSamples ?? 0)}</strong>
-          <small>本会话 {formatInteger(props.usageLedger?.sessionSamples ?? 0)} 次</small>
-        </div>
-        <div class="usage-dashboard-metric">
-          <span>缓存命中</span>
-          <strong>{formatPercent(props.cacheHitRate, props.hasCacheTokens)}</strong>
-          <small>{cacheStatusLabel(props.cacheHealth.status)}</small>
-        </div>
-      </section>
-
-      <div class="usage-dashboard-detail-grid">
-        <section>
-          <header class="usage-dashboard-section-head">
-            <div>
-              <span>当前会话</span>
-              <h3>缓存与上下文</h3>
-            </div>
-          </header>
-          <div class="usage-cache-overview">
-            <div class="usage-cache-disc">
-              <span>
-                <strong>{formatPercent(props.session.sessionCacheHitRate, props.sessionHasCacheTokens)}</strong>
-                <small>会话命中</small>
-              </span>
-            </div>
-            <div class="usage-cache-detail">
-              <p>目标 {formatPercent(props.cacheTarget, true)}，稳定前缀 {formatInteger(props.session.stablePromptTokens)} Token。</p>
-              <div class="usage-cache-meter" style={{ "--usage-cache-percent": `${Math.round(cacheRate() * 100)}%` } as JSX.CSSProperties}>
-                <span />
-              </div>
-              <div class="usage-cache-values">
-                <span><small>缓存读取</small><strong>{formatInteger(props.usage.promptCacheHitTokens)}</strong></span>
-                <span><small>缓存未命中</small><strong>{formatInteger(props.usage.promptCacheMissTokens)}</strong></span>
-                <span><small>本会话 Token</small><strong>{formatInteger(sessionTokens())}</strong></span>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section>
-          <header class="usage-dashboard-section-head">
-            <div>
-              <span>官方账单</span>
-              <h3>最近一次对账</h3>
-            </div>
-            <Show when={report()}>
-              {(currentReport) => <StatusPill tone={usageBillingStatusTone(currentReport().status)} icon={<Database size={13} />} label={usageBillingStatusLabel(currentReport().status)} />}
-            </Show>
-          </header>
-          <div class="usage-billing-snapshot">
-            <p>{report()?.reconciliationSource ? report()?.message : "尚未同步官方账单。本地金额仅用于即时估算。"}</p>
-            <div class="usage-billing-snapshot-grid">
-              <span><small>官方金额</small><strong>{report()?.reconciliationSource ? formatCost(report()?.officialCost ?? 0) : "待同步"}</strong></span>
-              <span><small>官方 Token</small><strong>{report()?.reconciliationSource ? formatInteger(officialTokens()) : "待同步"}</strong></span>
-              <span><small>账单误差</small><strong>{report()?.reconciliationSource ? formatCost(report()?.absoluteDifference ?? 0) : "--"}</strong></span>
-              <span><small>对账范围</small><strong>{report()?.scope || "未设置"}</strong></span>
-            </div>
-          </div>
-        </section>
+    <Tabs class="settings-page-body usage-page" value={view()} onChange={setView}>
+      <div class="usage-toolbar">
+        <Tabs.List class="usage-tabs" aria-label="统计视图">
+          <Tabs.Trigger value="overview">总览</Tabs.Trigger>
+          <Tabs.Trigger value="billing">账单对账</Tabs.Trigger>
+          <Tabs.Trigger value="diagnostics">诊断</Tabs.Trigger>
+        </Tabs.List>
+        <span class="usage-last-record">{usageLastRecordedAt()}</span>
       </div>
-
-      <section class="usage-dashboard-section usage-billing-workspace">
-        <header class="usage-dashboard-section-head">
-          <div>
-            <span>按供应商和周期</span>
-            <h3>账单与官方 Token</h3>
-          </div>
-          <div class="usage-billing-toolbar">
-            <label>
-              <span>供应商</span>
-            <SelectControl
-              ariaLabel="账单供应商"
-              value={providerID()}
-              options={props.providers.map((provider) => ({ value: provider.id, label: provider.name || provider.id }))}
-              onChange={(value) => setProviderID(value)}
-            />
-          </label>
-          <label>
-            <span>开始日期</span>
-            <input class="settings-input" type="date" value={periodStart()} onInput={(event) => setPeriodStart(event.currentTarget.value)} />
-          </label>
-          <label>
-            <span>结束日期</span>
-            <input class="settings-input" type="date" min={periodStart()} value={periodEnd()} onInput={(event) => setPeriodEnd(event.currentTarget.value)} />
-          </label>
+      <Tabs.Content value="overview" class="usage-panel">
+        <div class="usage-section-heading"><h2>累计用量</h2><span>本机全部供应商 · 已记录的请求</span></div>
+        <dl class="usage-summary" aria-label="本机累计用量">
+          <div><dt>累计估算费用</dt><dd>{props.usageLedger?.enabled ? formatCost(props.usageLedger.totalEffectiveCost) : "—"}</dd><small>本地费率估算</small></div>
+          <div><dt>输入 Token</dt><dd>{props.usageLedger?.enabled ? formatInteger(props.usageLedger.totalInputTokens) : "—"}</dd><small>累计 Token {formatInteger(totalTokens())}</small></div>
+          <div><dt>输出 Token</dt><dd>{props.usageLedger?.enabled ? formatInteger(props.usageLedger.totalOutputTokens) : "—"}</dd><small>模型生成的输出</small></div>
+          <div><dt>累计请求</dt><dd>{props.usageLedger?.enabled ? formatInteger(props.usageLedger.totalSamples) : "—"}</dd><small>本会话 {formatInteger(props.usageLedger?.sessionSamples ?? 0)} 次</small></div>
+        </dl>
+        <Show when={!props.usageLedger?.totalSamples}><p class="usage-empty">暂无累计请求记录。这里展示本机已记录的实际模型用量。</p></Show>
+        <div class="usage-overview-grid">
+          <section class="usage-card" aria-label="当前会话用量">
+            <div class="usage-section-heading"><h3>当前会话</h3><span>{props.session.model || "尚未开始"}</span></div>
+            <dl class="usage-session-values">
+              <div><dt>Token</dt><dd>{formatInteger(sessionTokens())}</dd></div>
+              <div><dt>请求</dt><dd>{formatInteger(props.usageLedger?.sessionSamples ?? 0)}</dd></div>
+              <div><dt>估算费用</dt><dd>{formatCost(props.usageLedger?.sessionEffectiveCost ?? 0)}</dd></div>
+            </dl>
+            <Show when={props.sessionHasCacheTokens} fallback={<p class="usage-empty">当前会话还没有缓存用量记录。</p>}>
+              <Meter class="usage-cache-meter" value={cacheRate() * 100} minValue={0} maxValue={100} getValueLabel={({ value }) => `${value.toFixed(1)}%`}>
+                <div class="usage-meter-heading"><Meter.Label>会话缓存命中率</Meter.Label><strong>{formatPercent(props.session.sessionCacheHitRate, true)}</strong></div>
+                <Meter.Track class="usage-meter-track"><Meter.Fill class="usage-meter-fill" /></Meter.Track>
+              </Meter>
+              <dl class="usage-cache-values">
+                <div><dt>缓存读取</dt><dd>{formatInteger(props.session.sessionCacheHitTokens)}</dd></div>
+                <div><dt>缓存未命中</dt><dd>{formatInteger(props.session.sessionCacheMissTokens)}</dd></div>
+              </dl>
+            </Show>
+          </section>
+          <section class="usage-card" aria-label="最近一次对账">
+            <div class="usage-section-heading"><h3>最近一次对账</h3><span>{activeProvider()?.name || "未选择供应商"}</span></div>
+            <p class="usage-note">{report()?.reconciliationSource ? report()?.message : "尚未同步官方账单，本地估算与官方账单分开显示。"}</p>
+            <dl class="usage-bill-preview">
+              <div><dt>官方金额</dt><dd>{report()?.reconciliationSource ? formatCost(report()?.officialCost ?? 0) : "待对账"}</dd></div>
+              <div><dt>官方 Token</dt><dd>{report()?.reconciliationSource ? formatInteger(officialTokens()) : "—"}</dd></div>
+              <div><dt>账单误差</dt><dd>{report()?.reconciliationSource ? formatCost(report()?.absoluteDifference ?? 0) : "—"}</dd></div>
+              <div><dt>范围</dt><dd>{report()?.scope || "未设置"}</dd></div>
+            </dl>
+            <SettingsButton variant="ghost" onClick={() => setView("billing")}>查看账单对账<ArrowRight size={13} /></SettingsButton>
+          </section>
+        </div>
+        <Show when={props.usageLedger?.lastError}><p class="usage-inline-error" role="alert">用量账本暂不可用：{props.usageLedger?.lastError}</p></Show>
+      </Tabs.Content>
+      <Tabs.Content value="billing" class="usage-panel">
+        <div class="usage-section-heading"><h2>账单对账</h2><span>按供应商与账单周期核对</span></div>
+        <div class="usage-billing-filters">
+          <label><span>供应商</span><SelectControl ariaLabel="账单供应商" value={providerID()} options={props.providers.map((provider) => ({ value: provider.id, label: provider.name || provider.id }))} disabled={billingBusy()} onChange={setProviderID} /></label>
+          <label><span>开始日期</span><input class="settings-input" type="date" aria-label="账单开始日期" value={periodStart()} disabled={billingBusy()} onInput={(event) => setPeriodStart(event.currentTarget.value)} /></label>
+          <label><span>结束日期</span><input class="settings-input" type="date" aria-label="账单结束日期" min={periodStart()} value={periodEnd()} disabled={billingBusy()} onInput={(event) => setPeriodEnd(event.currentTarget.value)} /></label>
           <div class="usage-billing-actions">
-            <button class="settings-soft-button" type="button" disabled={!providerID()} onClick={() => void props.loadUsageBillingReport(providerID())}>
-              <RefreshCw size={14} />
-              刷新
-            </button>
-            <button
-              class="settings-soft-button"
-              type="button"
-              disabled={!validPeriod() || report()?.providerKind !== "openai"}
-              onClick={syncOfficialBill}
-            >
-              <Download size={14} />
-              同步官方账单
-            </button>
+            <SettingsButton icon={<RefreshCw size={14} />} disabled={!providerID() || billingBusy()} onClick={() => void performBilling(() => props.loadUsageBillingReport(providerID()))}>刷新</SettingsButton>
+            <SettingsButton variant="primary" icon={<Download size={14} />} disabled={!validPeriod() || report()?.providerKind !== "openai"} loading={billingBusy()} onClick={syncOfficialBill}>同步官方账单</SettingsButton>
           </div>
-          </div>
-        </header>
-        <p class="usage-billing-period-note">结束日期按当天完整计算；同步仅会连接官方域名，账单凭据不会发送到中转地址。</p>
+        </div>
+        <p class="usage-billing-period-note">结束日期包含当天。{report()?.providerKind === "openai" ? "同步使用该供应商的官方账单接口。" : "该供应商暂不支持自动同步，可录入官方金额进行核对。"}</p>
+        <Show when={!validPeriod()}><p class="usage-inline-error" role="alert">请选择有效周期，结束日期不能早于开始日期。</p></Show>
+        <Show when={billingError()}><p class="usage-inline-error" role="alert">{billingError()}</p></Show>
         <Show when={report()} fallback={<p class="empty-line">正在读取该供应商的账单对账状态。</p>}>
           {(currentReport) => (
             <div class="usage-billing-report">
@@ -5355,12 +4268,14 @@ export function CachePanel(props: {
                     type="number"
                     min="0"
                     step="0.0001"
+                    aria-label="官方金额（USD）"
                     placeholder="官方美元金额"
                     value={manualCost()}
                     onInput={(event) => setManualCost(event.currentTarget.value)}
                   />
                   <input
                     class="settings-input"
+                    aria-label="对账备注"
                     placeholder="可选备注"
                     value={manualNote()}
                     onInput={(event) => setManualNote(event.currentTarget.value)}
@@ -5368,7 +4283,7 @@ export function CachePanel(props: {
                   <button
                     class="settings-soft-button"
                     type="button"
-                    disabled={!validPeriod() || !manualCost().trim() || Number(manualCost()) < 0}
+                    disabled={billingBusy() || !validPeriod() || !manualCost().trim() || !Number.isFinite(Number(manualCost())) || Number(manualCost()) < 0}
                     onClick={saveManualBill}
                   >
                     <Save size={14} />
@@ -5379,31 +4294,44 @@ export function CachePanel(props: {
             </div>
           )}
         </Show>
-      </section>
-      <section class="usage-dashboard-section">
-        <header class="usage-dashboard-section-head">
-          <div>
-            <span>运行状态</span>
-            <h3>诊断</h3>
-          </div>
-          <AlertTriangle size={16} />
-        </header>
-        <div class="diagnostic-stack">
-          <For each={props.diagnostics} fallback={<p class="empty-line">暂无诊断</p>}>
-            {(item) => <p>{item}</p>}
-          </For>
-        </div>
-        <Show when={props.usageLedger?.lastError}>
-          <p class="empty-line">用量账本暂不可用：{props.usageLedger?.lastError}</p>
-        </Show>
-      </section>
-    </div>
+      </Tabs.Content>
+      <Tabs.Content value="diagnostics" class="usage-panel">
+        <div class="usage-section-heading"><h2>最近一次模型响应</h2><StatusPill tone={props.cacheHealth.status === "ok" ? "good" : "neutral"} icon={<Database size={13} />} label={cacheStatusLabel(props.cacheHealth.status)} /></div>
+        <MetricGrid items={[
+          ["输入 Token", formatInteger(props.usage.inputTokens)],
+          ["输出 Token", formatInteger(props.usage.outputTokens)],
+          ["缓存读取", formatInteger(props.usage.promptCacheHitTokens)],
+          ["缓存未命中", formatInteger(props.usage.promptCacheMissTokens)],
+          ["本次缓存命中率", formatPercent(props.cacheHitRate, props.hasCacheTokens)],
+          ["本次估算费用", formatCost(props.usage.effectiveCost)],
+        ]} />
+        <section class="usage-card">
+          <div class="usage-section-heading"><h3>缓存诊断</h3><span>目标 {formatPercent(props.cacheTarget, true)}</span></div>
+          <p class="usage-note">稳定前缀 {formatInteger(props.session.stablePromptTokens)} Token。这里的诊断对应最近的模型请求。</p>
+          <div class="diagnostic-stack"><For each={props.diagnostics} fallback={<p>暂无诊断</p>}>{(item) => <p>{item}</p>}</For></div>
+        </section>
+        <Show when={props.usageLedger?.lastError}><p class="usage-inline-error" role="alert">用量账本暂不可用：{props.usageLedger?.lastError}</p></Show>
+      </Tabs.Content>
+    </Tabs>
   );
 }
 
-export function ContextPanel(props: { contextPreview: WorkbenchState["contextPreview"] | undefined }) {
+export function ContextPanel(props: { contextPreview: WorkbenchState["contextPreview"] | undefined; session: DeepSeekSessionState }) {
   return (
     <div class="settings-page-body">
+      <PanelSection icon={<Gauge size={16} />} title="当前会话与上下文">
+        <MetricGrid items={[
+          ["模型", props.session.model || "下一轮选择"],
+          ["轮次", formatInteger(props.session.turnCount)],
+          ["消息", formatInteger(props.session.messageCount)],
+          ["模型窗口", props.session.contextWindowTokens ? formatTokenWindow(props.session.contextWindowTokens) : "下一轮识别"],
+          ["可用输入", props.session.inputBudgetTokens ? formatTokenWindow(props.session.inputBudgetTokens) : "待计算"],
+          ["估算占用", props.session.inputBudgetTokens ? `${(props.session.contextUsagePercent ?? 0).toFixed(1)}%` : "待计算"],
+          ["长度来源", contextWindowSourceLabel(props.session.contextWindowSource)],
+          ["压缩次数", formatInteger(props.session.compressionCount ?? 0)],
+          ["已压缩消息", formatInteger(props.session.compressedMessageCount ?? 0)],
+        ]} />
+      </PanelSection>
       <PanelSection icon={<Hash size={16} />} title="前缀">
         <code class="hash-box">{shortHash(props.contextPreview?.prefixHash)}</code>
       </PanelSection>
@@ -5428,7 +4356,7 @@ export function ContextPanel(props: { contextPreview: WorkbenchState["contextPre
 
 export function PanelSection(props: { icon: JSX.Element; title: string; children: JSX.Element }) {
   return (
-    <section class="panel-section">
+    <section class="panel-section" aria-label={props.title}>
       <div class="panel-title">
         {props.icon}
         <h2>{props.title}</h2>
@@ -5478,26 +4406,6 @@ export function RouteStep(props: { icon: JSX.Element; title: string; detail: str
   );
 }
 
-export function IconButton(props: {
-  children: JSX.Element;
-  danger?: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-  title: string;
-}) {
-  return (
-    <button
-      class="icon-button"
-      classList={{ danger: props.danger }}
-      type="button"
-      title={props.title}
-      disabled={props.disabled}
-      onClick={props.onClick}
-    >
-      {props.children}
-    </button>
-  );
-}
 
 export function StatusPill(props: { icon: JSX.Element; label: string; tone: "good" | "watch" | "bad" | "neutral" }) {
   return (
@@ -5508,55 +4416,7 @@ export function StatusPill(props: { icon: JSX.Element; label: string; tone: "goo
   );
 }
 
-export function SettingField(props: { label: string; value: string; children: JSX.Element }) {
-  return (
-    <div class="setting-field">
-      <div class="setting-field-head">
-        <span>{props.label}</span>
-        <strong>{props.value}</strong>
-      </div>
-      {props.children}
-    </div>
-  );
-}
 
-export function SegmentedControl(props: {
-  value: string;
-  options: Array<{ value: string; label: string; description?: string }>;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div class="segmented-control">
-      <For each={props.options}>
-        {(option) => (
-          <button
-            type="button"
-            classList={{ active: props.value === option.value, danger: option.value === "danger-full-access" }}
-            title={option.description}
-            onClick={() => props.onChange(option.value)}
-          >
-            {option.label}
-          </button>
-        )}
-      </For>
-    </div>
-  );
-}
-
-export function SelectControl(props: {
-	ariaLabel?: string;
-  value: string;
-  options: Array<{ value: string; label: string }>;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <select aria-label={props.ariaLabel} class="settings-select" value={props.value} onChange={(event) => props.onChange(event.currentTarget.value)}>
-      <For each={props.options}>
-        {(option) => <option value={option.value}>{option.label}</option>}
-      </For>
-    </select>
-  );
-}
 
 export function ToggleRow(props: {
   checked: boolean;

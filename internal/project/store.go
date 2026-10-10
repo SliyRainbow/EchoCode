@@ -47,9 +47,10 @@ type Manifest struct {
 
 // Store 读写 projects.json，并发安全。
 type Store struct {
-	mu       sync.Mutex
-	path     string
-	manifest Manifest
+	mu        sync.Mutex
+	path      string
+	manifest  Manifest
+	committed Manifest
 }
 
 // Open 打开（或初始化）指定路径的项目清单。
@@ -58,6 +59,7 @@ func Open(path string) (*Store, error) {
 	if err := s.load(); err != nil {
 		return nil, err
 	}
+	s.committed = cloneManifest(s.manifest)
 	return s, nil
 }
 
@@ -73,7 +75,14 @@ func (s *Store) load() error {
 	return json.Unmarshal(data, &s.manifest)
 }
 
-func (s *Store) save() error {
+func (s *Store) save() (err error) {
+	defer func() {
+		if err != nil {
+			s.manifest = cloneManifest(s.committed)
+		} else {
+			s.committed = cloneManifest(s.manifest)
+		}
+	}()
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		return err
 	}
@@ -366,6 +375,17 @@ func (s *Store) SetProjectPinned(projectID string, pinned bool) error {
 		return err
 	}
 	return nil
+}
+
+func (s *Store) SetProjectExtraWritableRoots(projectID string, roots []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.findProject(strings.TrimSpace(projectID))
+	if p == nil {
+		return fmt.Errorf("项目不存在: %s", projectID)
+	}
+	p.ExtraWritableRoots = append([]string(nil), roots...)
+	return s.save()
 }
 
 // RenameProject updates only the display name; the workspace path is unchanged.

@@ -2,7 +2,9 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -304,6 +306,34 @@ func TestEstimatePromptTokensAccountsForCJKText(t *testing.T) {
 	}
 	if got := estimatePromptTokens(strings.Repeat("a", 300)); got != 100 {
 		t.Fatalf("ASCII estimate = %d, want 100", got)
+	}
+}
+
+func TestLongToolLoopCompactionKeepsRequestAndLatestToolPair(t *testing.T) {
+	messages := []protocol.Message{{Role: "system", Content: "stable"}, {Role: "user", Content: "Preserve this exact goal and its constraints."}}
+	for i := 0; i < 80; i++ {
+		id := fmt.Sprintf("call-%d", i)
+		messages = append(messages, protocol.Message{Role: "assistant", ToolCalls: []protocol.ToolCall{{ID: id, Function: protocol.ToolCallFunction{Name: "read_file", Arguments: json.RawMessage(`{"path":"fixture.txt"}`)}}}}, protocol.Message{Role: "tool", ToolCallID: id, Content: strings.Repeat("tool output ", 300), ToolError: i == 79})
+	}
+	fitted := fitToolLoopMessages(messages, 2000)
+	if estimateProtocolMessagesTokens(fitted) > 2000 || len(fitted) >= len(messages) {
+		t.Fatal("long tool chain was not compacted to budget")
+	}
+	requestFound := false
+	for _, message := range fitted {
+		if message.Role == "user" && message.Content == messages[1].Content {
+			requestFound = true
+		}
+	}
+	if !requestFound {
+		t.Fatal("current task was lost during tool compaction")
+	}
+	last := fitted[len(fitted)-1]
+	if last.ToolCallID != "call-79" || !last.ToolError || fitted[len(fitted)-2].ToolCalls[0].ID != last.ToolCallID {
+		t.Fatal("latest tool result/error or pair was lost")
+	}
+	if len(messages) != 162 || strings.Contains(messages[len(messages)-1].Content, "compressed") {
+		t.Fatal("raw transcript mutated")
 	}
 }
 

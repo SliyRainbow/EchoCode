@@ -278,8 +278,7 @@ func (s *Service) runTeamTurn(
 					s.sessionState.MessageCount = len(s.sessionMessages)
 					s.sessionState.TurnCount++
 					finishChatTiming(ctx, "completed")
-					s.recordAssistantAndCheckpoint(answer, plan.route.ModelID, parts, chatTurnDurationMs(ctx))
-					return ChatResult{Content: answer, Model: plan.route.ModelID, Usage: aggregate, State: s.workbenchStateLocked(), Parts: parts}, nil
+					return s.commitAssistantResult(ChatResult{Content: answer, Model: plan.route.ModelID, Usage: aggregate, Parts: parts}, chatTurnDurationMs(ctx))
 				}
 				planApproved = true
 			}
@@ -423,9 +422,8 @@ func (s *Service) runTeamTurn(
 			s.sessionState.MessageCount = len(s.sessionMessages)
 			s.sessionState.TurnCount++
 			finishChatTiming(ctx, "completed")
-			s.recordAssistantAndCheckpoint(answer, model, parts, chatTurnDurationMs(ctx))
 			s.markChatProviderStatus(primary.Provider.ID, "ok", fmt.Sprintf("AI 团队任务完成，共执行 %d 个角色回合。", len(artifacts)))
-			return ChatResult{Content: answer, Model: model, Usage: aggregate, State: s.workbenchStateLocked(), Parts: parts}, nil
+			return s.commitAssistantResult(ChatResult{Content: answer, Model: model, Usage: aggregate, Parts: parts}, chatTurnDurationMs(ctx))
 
 		default:
 			return failRun(fmt.Errorf("unknown AI team checkpoint stage %q", stage))

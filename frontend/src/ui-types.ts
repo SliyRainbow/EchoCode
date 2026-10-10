@@ -2,6 +2,7 @@
 import type { ChatAttachment, UsageMetrics, ModelProviderSetting, MessagePart } from "./types";
 
 export type ChatMessage = {
+  historyError?: string;
   id: string;
   eventId?: string;
   role: "user" | "assistant" | "system";
@@ -22,16 +23,13 @@ export type ChatMessage = {
   attachments?: ChatAttachment[];
 };
 
-export type DrawerTab = "settings" | "cache" | "context" | "tools";
 export type ViewSnapshot = { drawer: boolean; category: SettingsCategory };
-export type SidebarSession = { title: string; meta: string; active: boolean; dot: boolean; onClick: () => void };
+export type WorkbenchSection = "chat" | "automation" | "extensions" | "settings";
 export type ThemeMode = "dark" | "light";
 
 export type SettingsCategory =
-  | "general"
   | "appearance"
   | "config"
-  | "profile"
   | "shortcuts"
 	| "extensions"
   | "mcp"
@@ -41,7 +39,6 @@ export type SettingsCategory =
   | "models"
   | "team"
   | "skills"
-  | "commands"
   | "memory"
   | "index"
   | "usage"
@@ -49,7 +46,7 @@ export type SettingsCategory =
   | "git"
   | "automation"
   | "about"
-  | "archive";
+  ;
 
 export type ProviderPreset = {
   id: string;

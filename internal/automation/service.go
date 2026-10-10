@@ -53,6 +53,7 @@ type State struct {
 	Tasks     []Task `json:"tasks"`
 	Running   bool   `json:"running"`
 	UpdatedAt string `json:"updatedAt,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 type persistedState struct {
@@ -63,15 +64,17 @@ type persistedState struct {
 type Runner func(Task) (string, error)
 
 type Service struct {
-	mu        sync.Mutex
-	path      string
-	tasks     []Task
-	runner    Runner
-	notify    func(State)
-	cancel    context.CancelFunc
-	wake      chan struct{}
-	running   bool
-	updatedAt string
+	mu             sync.Mutex
+	path           string
+	tasks          []Task
+	runner         Runner
+	notify         func(State)
+	cancel         context.CancelFunc
+	wake           chan struct{}
+	running        bool
+	updatedAt      string
+	lastError      string
+	loopGeneration uint64
 }
 
 func New(path string) (*Service, error) {
@@ -103,12 +106,14 @@ func (s *Service) Start(parent context.Context) {
 	ctx, cancel := context.WithCancel(parent)
 	s.cancel = cancel
 	s.running = true
+	s.loopGeneration++
+	generation := s.loopGeneration
 	state, notify := s.snapshotLocked(), s.notify
 	s.mu.Unlock()
 	if notify != nil {
 		notify(state)
 	}
-	go s.loop(ctx)
+	go s.loop(ctx, generation)
 }
 
 func (s *Service) Stop() {
@@ -116,6 +121,7 @@ func (s *Service) Stop() {
 	cancel := s.cancel
 	s.cancel = nil
 	s.running = false
+	s.loopGeneration++
 	s.mu.Unlock()
 	if cancel != nil {
 		cancel()
@@ -137,6 +143,17 @@ func (s *Service) Save(task Task) (State, error) {
 
 	s.mu.Lock()
 	index := s.taskIndexLocked(task.ID)
+	if task.ID != "" && index < 0 {
+		state := s.snapshotLocked()
+		s.mu.Unlock()
+		return state, fmt.Errorf("自动化任务不存在: %s", task.ID)
+	}
+	if index >= 0 && taskActive(s.tasks[index]) {
+		state := s.snapshotLocked()
+		s.mu.Unlock()
+		return state, errors.New("任务正在启动或运行，完成后才能编辑")
+	}
+	previous := s.snapshotLocked()
 	if index < 0 {
 		task.ID = fmt.Sprintf("auto-%d", now.UnixNano())
 		task.CreatedAt = now.UTC().Format(time.RFC3339Nano)
@@ -161,7 +178,7 @@ func (s *Service) Save(task Task) (State, error) {
 	index = s.taskIndexLocked(task.ID)
 	s.tasks[index] = task
 	s.sortLocked()
-	state, err := s.persistAndSnapshotLocked(now)
+	state, err := s.persistMutationLocked(previous, now)
 	notify := s.notify
 	s.mu.Unlock()
 	if err != nil {
@@ -182,13 +199,14 @@ func (s *Service) Delete(taskID string) (State, error) {
 		s.mu.Unlock()
 		return state, fmt.Errorf("自动化任务不存在: %s", taskID)
 	}
-	if s.tasks[index].LastRun != nil && s.tasks[index].LastRun.Status == "running" {
+	if taskActive(s.tasks[index]) {
 		state := s.snapshotLocked()
 		s.mu.Unlock()
 		return state, errors.New("任务正在运行，完成后才能删除")
 	}
+	previous := s.snapshotLocked()
 	s.tasks = append(s.tasks[:index], s.tasks[index+1:]...)
-	state, err := s.persistAndSnapshotLocked(time.Now())
+	state, err := s.persistMutationLocked(previous, time.Now())
 	notify := s.notify
 	s.mu.Unlock()
 	if err == nil && notify != nil {
@@ -205,6 +223,7 @@ func (s *Service) SetEnabled(taskID string, enabled bool) (State, error) {
 		s.mu.Unlock()
 		return state, fmt.Errorf("自动化任务不存在: %s", taskID)
 	}
+	previous := s.snapshotLocked()
 	now := time.Now()
 	s.tasks[index].Enabled = enabled
 	s.tasks[index].UpdatedAt = now.UTC().Format(time.RFC3339Nano)
@@ -213,13 +232,15 @@ func (s *Service) SetEnabled(taskID string, enabled bool) (State, error) {
 	} else {
 		s.tasks[index].NextRunAt = ""
 	}
-	state, err := s.persistAndSnapshotLocked(now)
+	state, err := s.persistMutationLocked(previous, now)
 	notify := s.notify
 	s.mu.Unlock()
 	if err == nil && notify != nil {
 		notify(state)
 	}
-	s.signalWake()
+	if err == nil {
+		s.signalWake()
+	}
 	return state, err
 }
 
@@ -322,13 +343,15 @@ func (s *Service) CompleteChatTask(chatTaskID, status, message string) bool {
 	return true
 }
 
-func (s *Service) loop(ctx context.Context) {
+func (s *Service) loop(ctx context.Context, generation uint64) {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 	defer func() {
 		s.mu.Lock()
-		s.running = false
-		s.cancel = nil
+		if generation == s.loopGeneration {
+			s.running = false
+			s.cancel = nil
+		}
 		s.mu.Unlock()
 	}()
 	for {
@@ -336,8 +359,14 @@ func (s *Service) loop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if ctx.Err() != nil {
+				return
+			}
 			s.runDue(time.Now())
 		case <-s.wake:
+			if ctx.Err() != nil {
+				return
+			}
 			s.runDue(time.Now())
 		}
 	}
@@ -347,7 +376,7 @@ func (s *Service) runDue(now time.Time) {
 	s.mu.Lock()
 	ids := make([]string, 0)
 	for _, task := range s.tasks {
-		if !task.Enabled || task.NextRunAt == "" || (task.LastRun != nil && task.LastRun.Status == "running") {
+		if !task.Enabled || task.NextRunAt == "" || taskActive(task) {
 			continue
 		}
 		due, err := time.Parse(time.RFC3339Nano, task.NextRunAt)
@@ -369,7 +398,7 @@ func (s *Service) startTask(taskID string, now time.Time) (State, error) {
 		s.mu.Unlock()
 		return state, fmt.Errorf("自动化任务不存在: %s", taskID)
 	}
-	if s.tasks[index].LastRun != nil && s.tasks[index].LastRun.Status == "running" {
+	if taskActive(s.tasks[index]) {
 		state := s.snapshotLocked()
 		s.mu.Unlock()
 		return state, errors.New("自动化任务已经在运行")
@@ -380,13 +409,14 @@ func (s *Service) startTask(taskID string, now time.Time) (State, error) {
 		s.mu.Unlock()
 		return state, errors.New("自动化任务运行器尚未初始化")
 	}
+	previous := s.snapshotLocked()
 	s.tasks[index].RunCount++
 	s.tasks[index].LastRun = &Run{Status: "starting", StartedAt: now.UTC().Format(time.RFC3339Nano), Message: "正在启动 Agent"}
 	if s.tasks[index].Enabled {
 		s.tasks[index].NextRunAt = nextRun(s.tasks[index].Schedule, now).UTC().Format(time.RFC3339Nano)
 	}
 	task := cloneTask(s.tasks[index])
-	state, err := s.persistAndSnapshotLocked(now)
+	state, err := s.persistMutationLocked(previous, now)
 	notify := s.notify
 	s.mu.Unlock()
 	if err != nil {
@@ -469,9 +499,26 @@ func (s *Service) load() error {
 	return nil
 }
 
-func (s *Service) persistAndSnapshotLocked(now time.Time) (State, error) {
+func (s *Service) persistMutationLocked(previous State, now time.Time) (State, error) {
+	state, err := s.persistAndSnapshotLocked(now)
+	if err != nil {
+		s.tasks = previous.Tasks
+		s.updatedAt = previous.UpdatedAt
+		return s.snapshotLocked(), err
+	}
+	return state, nil
+}
+
+func (s *Service) persistAndSnapshotLocked(now time.Time) (state State, err error) {
 	s.updatedAt = now.UTC().Format(time.RFC3339Nano)
-	state := s.snapshotLocked()
+	defer func() {
+		if err != nil {
+			s.lastError = "保存自动化记录失败：" + err.Error()
+		} else {
+			s.lastError = ""
+		}
+		state = s.snapshotLocked()
+	}()
 	if s.path == "" {
 		return state, nil
 	}
@@ -490,7 +537,11 @@ func (s *Service) snapshotLocked() State {
 	for index, task := range s.tasks {
 		tasks[index] = cloneTask(task)
 	}
-	return State{Tasks: tasks, Running: s.running, UpdatedAt: s.updatedAt}
+	return State{Tasks: tasks, Running: s.running, UpdatedAt: s.updatedAt, Error: s.lastError}
+}
+
+func taskActive(task Task) bool {
+	return task.LastRun != nil && (task.LastRun.Status == "starting" || task.LastRun.Status == "running")
 }
 
 func (s *Service) taskIndexLocked(taskID string) int {

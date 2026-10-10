@@ -1,12 +1,113 @@
 package agent
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/SliyRainbow/EchoCode/internal/eventlog"
 	"github.com/SliyRainbow/EchoCode/internal/tools"
 )
+
+func TestSwitchBranchPreservesExternalChangesOnReplayOnlyPaths(t *testing.T) {
+	for _, existed := range []bool{true, false} {
+		t.Run(map[bool]string{true: "modified", false: "created"}[existed], func(t *testing.T) {
+			workspace := t.TempDir()
+			service := NewService(ServiceConfig{SkillsDir: t.TempDir(), SessionsDir: t.TempDir()})
+			defer service.Close()
+			service.runtimeSettings.WorkspaceRoot = workspace
+			service.runtimeSettings.FilesystemAccess = "workspace-write"
+			target := filepath.Join(workspace, "target-only.txt")
+			if existed {
+				if err := os.WriteFile(target, []byte("baseline"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := service.recordAssistantAndCheckpoint("baseline", "test", nil); err != nil {
+				t.Fatal(err)
+			}
+			baseline := service.eventStore.Head()
+			if err := service.recordFileSnapshot(tools.FileChange{Path: "target-only.txt", Before: "baseline", After: "branch content", Existed: existed, LineEnding: "lf"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(target, []byte("branch content"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := service.recordAssistantAndCheckpoint("target branch", "test", nil); err != nil {
+				t.Fatal(err)
+			}
+			tip := service.eventStore.Head()
+			if _, err := service.RewindToCheckpoint(baseline); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(target, []byte("external edit"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := service.SwitchBranch(tip); err == nil {
+				t.Fatal("target replay overwrote an external edit")
+			}
+			if got, _ := os.ReadFile(target); string(got) != "external edit" {
+				t.Fatalf("external content lost: %q", got)
+			}
+			if service.eventStore.Head() != baseline {
+				t.Fatal("failed replay moved HEAD")
+			}
+		})
+	}
+}
+
+func TestRewindCanReturnToOriginalTip(t *testing.T) {
+	workspace := t.TempDir()
+	target := filepath.Join(workspace, "timeline.txt")
+	service := NewService(ServiceConfig{SkillsDir: t.TempDir(), SessionsDir: t.TempDir()})
+	defer service.Close()
+	service.runtimeSettings.WorkspaceRoot = workspace
+	service.runtimeSettings.FilesystemAccess = "workspace-write"
+	metadata := tools.FileText{LineEnding: tools.LineEndingLF}
+	if err := tools.WriteFileTextAtomic(target, "first\n", metadata); err != nil {
+		t.Fatal(err)
+	}
+	service.recordUserEvent("first turn")
+	service.sessionState.TurnCount = 1
+	service.recordAssistantAndCheckpoint("first reply", "test-model", nil)
+	first := service.ListCheckpoints()[0].ID
+	service.recordUserEvent("second turn")
+	if err := service.recordFileSnapshot(tools.FileChange{Path: "timeline.txt", Before: "first\n", After: "second\n", Existed: true, LineEnding: "lf"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tools.WriteFileTextAtomic(target, "second\n", metadata); err != nil {
+		t.Fatal(err)
+	}
+	service.sessionState.TurnCount = 2
+	service.recordAssistantAndCheckpoint("second reply", "test-model", nil)
+	tip := service.eventStore.Head()
+	if _, err := service.RewindToCheckpoint(first); err != nil {
+		t.Fatal(err)
+	}
+	checkpoints := service.ListCheckpoints()
+	if len(checkpoints) != 1 || checkpoints[0].ID != first || !checkpoints[0].IsCurrent {
+		t.Fatalf("current checkpoint is not identified: %#v", checkpoints)
+	}
+	branches := service.ListBranches()
+	if len(branches) != 1 || branches[0].LeafID != tip || branches[0].IsCurrent {
+		t.Fatalf("the original tip must remain selectable after rewind: %#v", branches)
+	}
+	if file, err := tools.ReadFileText(target); err != nil || file.Content != "first\n" {
+		t.Fatalf("rewind did not restore the first file: %#v, %v", file, err)
+	}
+	if _, err := service.SwitchBranch(tip); err != nil {
+		t.Fatal(err)
+	}
+	if file, err := tools.ReadFileText(target); err != nil || file.Content != "second\n" {
+		t.Fatalf("returning to the tip did not replay the file: %#v, %v", file, err)
+	}
+	if history := service.GetSessionMessages(); len(history) != 4 || history[3].Content != "second reply" {
+		t.Fatalf("returning to the tip did not restore conversation history: %#v", history)
+	}
+	if branches = service.ListBranches(); len(branches) != 1 || !branches[0].IsCurrent {
+		t.Fatalf("the restored tip should now be current: %#v", branches)
+	}
+}
 
 // TestSwitchBranchMovesFilesAcrossLines 验证分支切换时文件正确在两条线间切换。
 func TestSwitchBranchMovesFilesAcrossLines(t *testing.T) {

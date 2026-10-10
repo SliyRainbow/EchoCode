@@ -7,21 +7,9 @@ import type {
   UsageMetrics,
   WorkbenchState,
 } from "./types";
-import type { ChatMessage, DrawerTab, SettingsCategory, ThemeMode, ProviderPreset } from "./ui-types";
+import type { ChatMessage, SettingsCategory, ThemeMode, ProviderPreset } from "./ui-types";
 import { defaultTeamSettings } from "./team-config";
-import {
-  settingsGroups,
-  sitePermissionOptions,
-  defaultSidebarWidth,
-  minSidebarWidth,
-  maxSidebarWidth,
-  sidebarWidthStorageKey,
-  defaultBrowserPanelWidth,
-  minBrowserPanelWidth,
-  maxBrowserPanelWidth,
-  browserPanelWidthStorageKey,
-  themeStorageKey,
-} from "./constants";
+import { settingsGroups, extensionNavigation, automationNavigation, sitePermissionOptions, defaultSidebarWidth, minSidebarWidth, maxSidebarWidth, sidebarWidthStorageKey, minBrowserPanelWidth, maxBrowserPanelWidth, browserPanelWidthStorageKey, themeStorageKey } from "./constants";
 
 export function createChatMessage(role: ChatMessage["role"], content: string): ChatMessage {
   return {
@@ -271,20 +259,10 @@ export function fallbackConfigFiles(): WorkbenchState["configFiles"] {
   };
 }
 
-export function categoryForDrawerTab(tab: DrawerTab): SettingsCategory {
-  switch (tab) {
-    case "settings":
-      return "general";
-    case "cache":
-      return "usage";
-    case "context":
-      return "index";
-    case "tools":
-      return "skills";
-  }
-}
-
 export function findSettingsItem(category: SettingsCategory) {
+  if (category === "automation") return automationNavigation;
+  const extension = extensionNavigation.find(item => item.id === category);
+  if (extension) return extension;
   for (const group of settingsGroups) {
     const item = group.items.find((candidate) => candidate.id === category);
     if (item) {
@@ -307,7 +285,7 @@ export function settingsCategoryDescription(category: SettingsCategory) {
 		case "extensions":
 			return "发现、安装和管理经过校验的 MCP、插件与 Skills。";
 		case "plugins":
-			return "管理 Office、Access 和第三方扩展工具。";
+			return "管理内置与第三方插件，配置工具权限。";
     case "browser":
       return "管理 EchoCode 的浏览器。可在电脑使用设置中配置 Google Chrome。";
     case "computer":
@@ -316,8 +294,6 @@ export function settingsCategoryDescription(category: SettingsCategory) {
       return "设置分支、拉取请求和工作树清理策略。";
     case "environment":
       return "本地环境用于指示 EchoCode 如何为项目设置工作树。";
-    case "general":
-      return "管理 DeepSeek 连接和当前会话。";
     case "appearance":
       return "调整主题和工作区布局。";
     case "models":
@@ -326,24 +302,18 @@ export function settingsCategoryDescription(category: SettingsCategory) {
       return "配置规划、实现、测试、审阅和汇总角色使用的模型。";
     case "skills":
       return "查看模型可调用的内置 Agent 工具、Schema 快照和已加载 Skills。";
-    case "commands":
-      return "查看本地命令权限和工具路由。";
     case "memory":
       return "管理项目级跨会话记忆。";
     case "index":
       return "查看稳定前缀和易变上下文。";
     case "usage":
-      return "查看缓存命中率、tokens 和诊断信息。";
-    case "profile":
-      return "查看当前用户和个性化摘要。";
+      return "查看本机用量、会话缓存与供应商账单。";
     case "shortcuts":
       return "查看常用键盘快捷键。";
     case "about":
       return "查看版本与构建信息，并管理自动更新。";
     case "automation":
       return "让 Agent 按计划在指定项目与会话中执行任务。";
-    case "archive":
-      return "查看已归档的对话。";
   }
 }
 
@@ -539,7 +509,7 @@ export function providerReadyForChat(provider: ModelProviderSetting | undefined)
 
 export function providerConnectionSummary(provider: ModelProviderSetting | undefined, deepSeek: WorkbenchState["deepSeek"]) {
   if (!provider) {
-    return { label: "未连接", ok: false, ready: false };
+    return { label: "未连接", ok: false, ready: false, failed: false };
   }
   const ready = providerReadyForChat(provider);
   if (provider.id === "deepseek") {
@@ -547,15 +517,17 @@ export function providerConnectionSummary(provider: ModelProviderSetting | undef
       label: deepSeek.configured ? statusLabel(deepSeek.lastCheckStatus) : "未连接",
       ok: deepSeek.lastCheckStatus === "ok",
       ready: deepSeek.configured,
+      failed: deepSeek.lastCheckStatus === "error",
     };
   }
   if (!ready) {
-    return { label: "未连接", ok: false, ready: false };
+    return { label: "未连接", ok: false, ready: false, failed: false };
   }
   return {
-    label: provider.lastSyncStatus === "ok" ? "已连接" : provider.protocol === "local" ? "本地" : "已配置",
+    label: provider.lastSyncStatus === "error" ? "连接失败" : provider.lastSyncStatus === "ok" ? "已连接" : provider.protocol === "local" ? "本地" : "已配置",
     ok: provider.lastSyncStatus === "ok" || provider.protocol === "local",
     ready: true,
+    failed: provider.lastSyncStatus === "error",
   };
 }
 
@@ -745,7 +717,8 @@ export function compactPath(value: string) {
 }
 
 export function readStoredSidebarWidth() {
-  const stored = Number(readLocalStorage(sidebarWidthStorageKey));
+  const saved = readLocalStorage(sidebarWidthStorageKey);
+  const stored = saved?.trim() ? Number(saved) : Number.NaN;
   if (!Number.isFinite(stored)) {
     return defaultSidebarWidth;
   }

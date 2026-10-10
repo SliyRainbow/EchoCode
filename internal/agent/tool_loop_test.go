@@ -368,7 +368,7 @@ func TestDeepSeekThinkingToolLoopReturnsReasoningContent(t *testing.T) {
 					t.Errorf("second DeepSeek request missing %q: %s", expected, payload)
 				}
 			}
-			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"deepseek done"}}]}`))
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"deepseek done","reasoning_content":"verified result"}}]}`))
 		default:
 			w.WriteHeader(http.StatusInternalServerError)
 		}
@@ -386,6 +386,9 @@ func TestDeepSeekThinkingToolLoopReturnsReasoningContent(t *testing.T) {
 	}
 	if outcome.Content != "deepseek done" || requestCount.Load() != 2 {
 		t.Fatalf("outcome = %#v, requests = %d", outcome, requestCount.Load())
+	}
+	if outcome.Reasoning != "signed plan\n\nverified result" {
+		t.Fatalf("reasoning from earlier tool rounds was lost: %q", outcome.Reasoning)
 	}
 }
 

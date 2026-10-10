@@ -46,8 +46,8 @@ const viewerTheme = EditorView.theme({
     padding: "0 9px 0 5px",
   },
   ".cm-activeLine": {
-    backgroundColor: "color-mix(in srgb, var(--accent) 10%, transparent)",
-    boxShadow: "inset 3px 0 0 var(--accent)",
+    backgroundColor: "var(--accent-soft)",
+    boxShadow: "none",
   },
   ".cm-activeLineGutter": {
     color: "var(--text-primary)",
@@ -193,5 +193,5 @@ export function CodeViewer(props: CodeViewerProps) {
 }
 
 function themeExtensions(dark: boolean): Extension {
-  return dark ? [oneDark, viewerTheme] : viewerTheme;
+  return dark ? [viewerTheme, oneDark] : viewerTheme;
 }

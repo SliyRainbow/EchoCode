@@ -20,6 +20,10 @@ const (
 // Keep this table deliberately exact. Provider aliases and family prefixes are
 // not enough evidence to claim a model's real context window.
 var exactModelContextWindows = map[string]int{
+	"gpt-6-astra":             1_050_000,
+	"gpt-6.1-sol":             1_050_000,
+	"gpt-6-sol":               1_050_000,
+	"gpt-6-luna":              1_050_000,
 	"gpt-5":                   400_000,
 	"gpt-5-mini":              400_000,
 	"gpt-5-nano":              400_000,

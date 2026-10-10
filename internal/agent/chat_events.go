@@ -245,6 +245,8 @@ func collectProviderStreamWithTiming(
 				if ctxErr := ctx.Err(); ctxErr != nil {
 					return partialResult(), ctxErr
 				}
+				// Protocol adapters distinguish a truncated wire stream from
+				// normal closure; internal providers can finish by closing.
 				return partialResult(), nil
 			}
 			resetIdleTimer()

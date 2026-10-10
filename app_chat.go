@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +18,9 @@ import (
 
 type chatTaskRunner struct {
 	mu sync.Mutex
+	// Serialize runtime snapshots with history mutations; otherwise a new task
+	// can register with a pre-rewind event head after the idle check succeeds.
+	transitionMu sync.Mutex
 	// active is retained as a compatibility pointer for older callers. The
 	// maps are authoritative once the application starts normally.
 	active         *chatTask
@@ -115,6 +120,18 @@ func (a *App) StartChatMessage(prompt string) (string, error) {
 	return a.startChatMessageForProjectSession("", "", prompt, nil)
 }
 
+func (a *App) CompressSessionContext(projectID, sessionID string) (agent.ContextCompressionResult, error) {
+	if a.service == nil {
+		return agent.ContextCompressionResult{}, errors.New("Agent 服务尚未初始化")
+	}
+	a.chat.transitionMu.Lock()
+	defer a.chat.transitionMu.Unlock()
+	if err := a.requireProjectSessionIdleChat(projectID, sessionID); err != nil {
+		return agent.ContextCompressionResult{}, err
+	}
+	return a.service.CompressSessionContext(projectID, sessionID)
+}
+
 func (a *App) StartChatMessageWithAttachments(prompt string, attachments []agent.ChatAttachment) (string, error) {
 	return a.startChatMessageForProjectSession("", "", prompt, attachments)
 }
@@ -198,6 +215,8 @@ func (a *App) startChatMessageForProjectSessionRouteRegisteredWithKind(
 	if a.service == nil {
 		return "", errors.New("Agent 服务尚未初始化")
 	}
+	a.chat.transitionMu.Lock()
+	defer a.chat.transitionMu.Unlock()
 	activeProjectID, activeSessionID := a.service.ActiveSessionIDs()
 	if strings.TrimSpace(sessionID) == "" {
 		sessionID = activeSessionID
@@ -463,10 +482,66 @@ func chatSessionKey(projectID, sessionID string) string {
 	return strings.TrimSpace(projectID) + "\x00" + strings.TrimSpace(sessionID)
 }
 
+// Rewind changes files as well as history. Other conversations in the same
+// workspace must be idle, while tasks in unrelated workspaces can continue.
+// Callers hold transitionMu until the history operation is complete.
+func (a *App) requireTimelineIdleChat(projectID, sessionID string) error {
+	settings := a.service.WorkbenchState().RuntimeSettings
+	roots := append([]string{settings.WorkspaceRoot}, settings.ExtraWritableRoots...)
+	a.chat.mu.Lock()
+	defer a.chat.mu.Unlock()
+	check := func(task *chatTask) error {
+		if task == nil {
+			return nil
+		}
+		if task.projectID == projectID || (task.projectID == "" && task.sessionID == sessionID) {
+			return errors.New("该工作区仍有对话任务运行，请先停止生成再回退或切换分支")
+		}
+		if task.service != nil {
+			other := task.service.WorkbenchState().RuntimeSettings
+			for _, left := range roots {
+				for _, right := range append([]string{other.WorkspaceRoot}, other.ExtraWritableRoots...) {
+					if workspacePathsOverlap(left, right) {
+						return errors.New("共享目录中仍有对话任务运行，请先停止生成再回退或切换分支")
+					}
+				}
+			}
+		}
+		return nil
+	}
+	for _, task := range a.chat.tasks {
+		if err := check(task); err != nil {
+			return err
+		}
+	}
+	return check(a.chat.active)
+}
+
+func workspacePathsOverlap(left, right string) bool {
+	if strings.TrimSpace(left) == "" || strings.TrimSpace(right) == "" {
+		return false
+	}
+	left, leftErr := filepath.Abs(left)
+	right, rightErr := filepath.Abs(right)
+	if leftErr != nil || rightErr != nil {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		left, right = strings.ToLower(left), strings.ToLower(right)
+	}
+	left, right = filepath.Clean(left), filepath.Clean(right)
+	separator := string(filepath.Separator)
+	return left == right || strings.HasPrefix(left, strings.TrimRight(right, separator)+separator) || strings.HasPrefix(right, strings.TrimRight(left, separator)+separator)
+}
+
 func (a *App) runChatTask(ctx context.Context, task *chatTask, prompt string, attachments []agent.ChatAttachment) {
 	defer task.markDone()
-	generation, _ := task.service.StartTaskRuntimeWithGeneration(task.id, task.startedAt)
+	generation, startErr := task.service.StartTaskRuntimeWithGeneration(task.id, task.startedAt)
 	task.setGeneration(generation)
+	if startErr != nil {
+		a.completeChatTask(task, ChatTaskEvent{TaskID: task.id, Type: "failed", Message: fmt.Sprintf("保存任务状态失败: %v", startErr)})
+		return
+	}
 	a.emitChatTaskEvent(ChatTaskEvent{TaskID: task.id, Type: "started", Message: "正在准备上下文"})
 	newProgressSink := func(turnGeneration uint64) agent.ChatEventSink {
 		return func(progress agent.ChatStreamEvent) {
@@ -579,10 +654,22 @@ func (a *App) completeChatTask(task *chatTask, event ChatTaskEvent) {
 			result = *event.Result
 		}
 		if task.service != nil {
+			var persistErr error
 			if generation != 0 {
-				_, _ = task.service.FinishTaskRuntimeForGeneration(task.id, generation, event.Type, event.Message, result)
+				_, persistErr = task.service.FinishTaskRuntimeForGeneration(task.id, generation, event.Type, event.Message, result)
 			} else {
-				_ = task.service.FinishTaskRuntime(task.id, event.Type, event.Message, result)
+				persistErr = task.service.FinishTaskRuntime(task.id, event.Type, event.Message, result)
+			}
+			if persistErr != nil {
+				if event.Result == nil {
+					result.State = task.service.WorkbenchState()
+				}
+				result.HistoryError = fmt.Sprintf("任务状态保存失败，请保留当前输出并检查存储：%v", persistErr)
+				if event.Type == "completed" {
+					event.Type = "failed"
+				}
+				event.Message = strings.TrimSpace(event.Message + "\n" + result.HistoryError)
+				event.Result = &result
 			}
 		}
 		if task.cancel != nil {
@@ -591,7 +678,9 @@ func (a *App) completeChatTask(task *chatTask, event ChatTaskEvent) {
 		// Keep the task registered until its durable state has been reloaded.
 		// Otherwise a successor task in the same session can start while this
 		// task's older snapshot is still being applied and overwrite it.
-		a.reloadCompletedChatTask(task)
+		if result.HistoryError == "" {
+			a.reloadCompletedChatTask(task)
+		}
 		a.finishChatTask(task)
 		a.emitChatTaskEvent(event)
 	})

@@ -1,0 +1,15 @@
+/* The cascade order is defined once at the application boundary. */
+@import "../styles.css";
+@import "highlight.js/styles/github-dark.css";
+@import "./chat.css";
+@import "./polish.css";
+@import "./workbench.css";
+@import "./settings.css";
+@import "./settings-workspaces.css";
+@import "./usage.css";
+@import "./extensions.css";
+@import "./notices.css";
+@import "./timeline.css";
+@import "./panels.css";
+@import "./context.css";
+@import "./motion.css";

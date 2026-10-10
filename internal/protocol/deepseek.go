@@ -1,7 +1,6 @@
 package protocol
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -97,12 +96,17 @@ func (p DeepSeekProvider) Stream(ctx context.Context, request ChatRequest) (<-ch
 	}
 	body := deepSeekChatRequest{
 		Model:           request.Model,
-		Messages:        request.Messages,
+		Messages:        openAIMessagesFromProtocol(request.Messages, len(request.Tools) > 0),
 		Temperature:     temperature,
 		Stream:          true,
 		StreamOptions:   &deepSeekStreamOptions{IncludeUsage: true},
 		ReasoningEffort: reasoning.Effort,
 		Tools:           request.Tools,
+		ToolChoice:      request.ToolChoice,
+		MaxTokens:       request.MaxOutputTokens,
+	}
+	if len(request.Tools) > 0 && !request.OmitParallelToolCalls {
+		body.ParallelToolCalls = &request.ParallelToolCalls
 	}
 	if reasoning.Mode != "" {
 		body.Thinking = &deepSeekThinking{Type: reasoning.Mode}
@@ -114,7 +118,7 @@ func (p DeepSeekProvider) Stream(ctx context.Context, request ChatRequest) (<-ch
 	if err != nil {
 		return nil, err
 	}
-	encoded, err = mergeExtraJSONBody(encoded, p.ExtraBodyJSON, protectedBodyKeys("model", "messages", "temperature", "thinking", "reasoning_effort", "stream", "stream_options", "tools"))
+	encoded, err = mergeExtraJSONBody(encoded, p.ExtraBodyJSON, protectedBodyKeys("model", "messages", "temperature", "thinking", "reasoning_effort", "stream", "stream_options", "tools", "tool_choice", "parallel_tool_calls"))
 	if err != nil {
 		return nil, err
 	}
@@ -156,11 +160,16 @@ func (p DeepSeekProvider) Complete(ctx context.Context, request ChatRequest) (Co
 	}
 	body := deepSeekChatRequest{
 		Model:           request.Model,
-		Messages:        request.Messages,
+		Messages:        openAIMessagesFromProtocol(request.Messages, len(request.Tools) > 0),
 		Temperature:     temperature,
 		Stream:          false,
 		ReasoningEffort: reasoning.Effort,
 		Tools:           request.Tools,
+		ToolChoice:      request.ToolChoice,
+		MaxTokens:       request.MaxOutputTokens,
+	}
+	if len(request.Tools) > 0 && !request.OmitParallelToolCalls {
+		body.ParallelToolCalls = &request.ParallelToolCalls
 	}
 	if reasoning.Mode != "" {
 		body.Thinking = &deepSeekThinking{Type: reasoning.Mode}
@@ -172,7 +181,7 @@ func (p DeepSeekProvider) Complete(ctx context.Context, request ChatRequest) (Co
 	if err != nil {
 		return CompletionResult{}, err
 	}
-	encoded, err = mergeExtraJSONBody(encoded, p.ExtraBodyJSON, protectedBodyKeys("model", "messages", "temperature", "thinking", "reasoning_effort", "stream", "tools"))
+	encoded, err = mergeExtraJSONBody(encoded, p.ExtraBodyJSON, protectedBodyKeys("model", "messages", "temperature", "thinking", "reasoning_effort", "stream", "tools", "tool_choice", "parallel_tool_calls"))
 	if err != nil {
 		return CompletionResult{}, err
 	}
@@ -201,6 +210,9 @@ func (p DeepSeekProvider) Complete(ctx context.Context, request ChatRequest) (Co
 	}
 	if payload.Usage != nil {
 		result.Usage = payload.Usage.toTokenUsage()
+	}
+	if failure := finishReasonFailure("deepseek", payload.Choices[0].FinishReason); failure != nil {
+		return result, NewProviderError(*failure.ProviderError)
 	}
 	return result, nil
 }
@@ -336,11 +348,16 @@ func deepSeekNetworkError(err error, attempts int) error {
 }
 
 func parseDeepSeekStream(ctx context.Context, body io.Reader, events chan<- StreamEvent) {
-	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	scanner := newSSEReader(body)
 	toolCalls := map[int]*streamToolCallAccumulator{}
 	toolCallsEmitted := false
-	for scanner.Scan() {
+	finishReason := ""
+	var terminalFailure *StreamEvent
+	for {
+		frame, ok := scanner.Next()
+		if !ok {
+			break
+		}
 		select {
 		case <-ctx.Done():
 			events <- StreamEvent{Type: "error", Error: deepSeekStreamContextError()}
@@ -348,15 +365,15 @@ func parseDeepSeekStream(ctx context.Context, body io.Reader, events chan<- Stre
 		default:
 		}
 
-		line := strings.TrimSpace(scanner.Text())
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		payload := strings.TrimSpace(frame.Data)
 		if payload == "" {
 			continue
 		}
 		if payload == "[DONE]" {
+			if terminalFailure != nil {
+				events <- *terminalFailure
+				return
+			}
 			if !toolCallsEmitted {
 				emitAccumulatedToolCalls(events, toolCalls)
 			}
@@ -369,6 +386,11 @@ func parseDeepSeekStream(ctx context.Context, body io.Reader, events chan<- Stre
 			events <- StreamEvent{Type: "error", Error: "无法解析 DeepSeek 流式响应: " + err.Error()}
 			return
 		}
+		if chunk.Error != nil {
+			info := providerErrorFromUpstream("deepseek", chunk.Error, 0, "")
+			events <- StreamEvent{Type: "error", Error: info.Message, ProviderError: &info}
+			return
+		}
 		for _, choice := range chunk.Choices {
 			if choice.Delta.ReasoningContent != "" {
 				events <- StreamEvent{Type: "reasoning", Delta: choice.Delta.ReasoningContent}
@@ -378,11 +400,15 @@ func parseDeepSeekStream(ctx context.Context, body io.Reader, events chan<- Stre
 			}
 			accumulateToolCallDeltas(toolCalls, choice.Delta.ToolCalls)
 			if choice.FinishReason != "" {
-				if len(toolCalls) > 0 && !toolCallsEmitted {
+				finishReason = choice.FinishReason
+				terminalFailure = finishReasonFailure("deepseek", finishReason)
+				if terminalFailure == nil && len(toolCalls) > 0 && !toolCallsEmitted {
 					emitAccumulatedToolCalls(events, toolCalls)
 					toolCallsEmitted = true
 				}
-				events <- StreamEvent{Type: "finish", FinishReason: choice.FinishReason}
+				if terminalFailure == nil {
+					events <- StreamEvent{Type: "finish", FinishReason: choice.FinishReason}
+				}
 			}
 		}
 		if chunk.Usage != nil {
@@ -395,6 +421,14 @@ func parseDeepSeekStream(ctx context.Context, body io.Reader, events chan<- Stre
 			return
 		}
 		events <- StreamEvent{Type: "error", Error: "读取 DeepSeek 流式响应失败: " + err.Error()}
+		return
+	}
+	if terminalFailure != nil {
+		events <- *terminalFailure
+		return
+	}
+	if finishReason == "" {
+		events <- interruptedStream("deepseek")
 		return
 	}
 	if !toolCallsEmitted {
@@ -467,14 +501,17 @@ type deepSeekModelsResponse struct {
 }
 
 type deepSeekChatRequest struct {
-	Model           string                 `json:"model"`
-	Messages        []Message              `json:"messages"`
-	Temperature     float64                `json:"temperature,omitempty"`
-	Thinking        *deepSeekThinking      `json:"thinking,omitempty"`
-	ReasoningEffort string                 `json:"reasoning_effort,omitempty"`
-	Stream          bool                   `json:"stream"`
-	StreamOptions   *deepSeekStreamOptions `json:"stream_options,omitempty"`
-	Tools           []ToolDefinition       `json:"tools,omitempty"`
+	ToolChoice        string                 `json:"tool_choice,omitempty"`
+	ParallelToolCalls *bool                  `json:"parallel_tool_calls,omitempty"`
+	MaxTokens         int                    `json:"max_tokens,omitempty"`
+	Model             string                 `json:"model"`
+	Messages          []openAIMessage        `json:"messages"`
+	Temperature       float64                `json:"temperature,omitempty"`
+	Thinking          *deepSeekThinking      `json:"thinking,omitempty"`
+	ReasoningEffort   string                 `json:"reasoning_effort,omitempty"`
+	Stream            bool                   `json:"stream"`
+	StreamOptions     *deepSeekStreamOptions `json:"stream_options,omitempty"`
+	Tools             []ToolDefinition       `json:"tools,omitempty"`
 }
 
 type deepSeekStreamOptions struct {
@@ -486,6 +523,7 @@ type deepSeekThinking struct {
 }
 
 type deepSeekStreamChunk struct {
+	Error   *upstreamError `json:"error,omitempty"`
 	Choices []struct {
 		Delta struct {
 			Content          string                `json:"content"`

@@ -1,3 +1,5 @@
+import { PanelTab } from "./ui/PanelTab";
+import { Tabs } from "@kobalte/core/tabs";
 import { Bot, FileCode2, Globe2 } from "lucide-solid";
 import { Show, createMemo } from "solid-js";
 import type { BrowserCredential, BrowserPreview, WorkspaceFileRequest } from "../types";
@@ -43,54 +45,38 @@ export function SidePanelHost(props: SidePanelHostProps) {
   });
 
   return (
-    <aside class="side-panel-host" classList={{ "has-mode-tabs": showModeTabs() }} aria-label="右侧工作面板">
+    <Tabs as="aside" class="side-panel-host" classList={{ "has-mode-tabs": showModeTabs() }} aria-label="右侧工作面板" value={activeView()} onChange={(value) => props.onSelectView(value as SidePanelView)}>
       <Show when={showModeTabs()}>
-        <div class="side-panel-mode-tabs" role="tablist" aria-label="右侧面板标签">
+        <Tabs.List class="side-panel-mode-tabs panel-tabs" aria-label="右侧面板标签">
           <Show when={hasBrowser()}>
-            <button
-              type="button"
-              role="tab"
-              classList={{ active: activeView() === "browser" }}
-              aria-selected={activeView() === "browser"}
-              onClick={() => props.onSelectView("browser")}
-            >
+            <PanelTab value="browser">
               <Globe2 size={13} />
               <span>浏览器</span>
-            </button>
+            </PanelTab>
           </Show>
           <Show when={hasSubagent()}>
-            <button
-              type="button"
-              role="tab"
-              classList={{ active: activeView() === "subagent" }}
-              aria-selected={activeView() === "subagent"}
+            <PanelTab value="subagent"
               title={props.subagent?.label || "子代理"}
-              onClick={() => props.onSelectView("subagent")}
             >
               <Bot size={13} />
               <span>{props.subagent?.label || "子代理"}</span>
-            </button>
+            </PanelTab>
           </Show>
           <Show when={hasFiles()}>
-            <button
-              type="button"
-              role="tab"
-              classList={{ active: activeView() === "files" }}
-              aria-selected={activeView() === "files"}
+            <PanelTab value="files"
               title={props.fileRequest?.path || "文件"}
-              onClick={() => props.onSelectView("files")}
             >
               <FileCode2 size={13} />
               <span>{fileTabLabel(props.fileRequest?.path)}</span>
-            </button>
+            </PanelTab>
           </Show>
-        </div>
+        </Tabs.List>
       </Show>
 
       <div class="side-panel-pages">
         <Show when={props.browser}>
           {(preview) => (
-            <section
+            <Tabs.Content as="section" value="browser" forceMount
               class="side-panel-page"
               classList={{ inactive: activeView() !== "browser" }}
               aria-hidden={activeView() !== "browser"}
@@ -102,11 +88,11 @@ export function SidePanelHost(props: SidePanelHostProps) {
                 suspended={props.browserSuspended || activeView() !== "browser"}
                 onClose={props.onCloseBrowser}
               />
-            </section>
+            </Tabs.Content>
           )}
         </Show>
         <Show when={props.reviewOpen}>
-          <section
+          <Tabs.Content as="section" value="files" forceMount
             class="side-panel-page"
             classList={{ inactive: activeView() !== "files" }}
             aria-hidden={activeView() !== "files"}
@@ -118,11 +104,11 @@ export function SidePanelHost(props: SidePanelHostProps) {
               dark={props.dark}
               onClose={props.onCloseFiles}
             />
-          </section>
+          </Tabs.Content>
         </Show>
         <Show when={props.subagent}>
           {(part) => (
-            <section
+            <Tabs.Content as="section" value="subagent" forceMount
               class="side-panel-page"
               classList={{ inactive: activeView() !== "subagent" }}
               aria-hidden={activeView() !== "subagent"}
@@ -134,11 +120,11 @@ export function SidePanelHost(props: SidePanelHostProps) {
                 onStop={props.onStopSubagent}
                 onClose={props.onCloseSubagent}
               />
-            </section>
+            </Tabs.Content>
           )}
         </Show>
       </div>
-    </aside>
+    </Tabs>
   );
 }
 
